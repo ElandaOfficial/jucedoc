@@ -1,0 +1,248 @@
+
+#pragma once
+
+#include <bitset>
+#include <venum.h>
+#include <cassert>
+
+namespace classdef
+{
+    VENUM_CREATE(StorageClass, Static, Extern, ThreadLocal, Mutable)
+    VENUM_CREATE(EntityQualifier, Const, Volatile)
+    
+    VENUM_CREATE_ASSOC
+    (
+        ID(ReferenceType),
+        VALUES((LValue)("&"), (RValue)("&&")),
+        BODY
+        (
+        public:
+            std::string_view getRepresentation() const noexcept { return representation; }
+        
+        private:
+            const char *representation;
+        
+            constexpr ReferenceTypeConstant(const char *name, int ordinal, const char *representation) noexcept
+                : VENUM_BASE(name, ordinal), representation(representation)
+            {}
+        )
+    )
+    
+    struct INamedEntity
+    {
+        virtual ~INamedEntity() = default;
+        
+        /**
+         *  Gets the identifier of this entity.
+         *  @return The name
+         */
+        virtual std::string_view getIdentifier() const = 0;
+        
+        /**
+         *  Prints out the notation of this entity.
+         *  @return The notation
+         */
+        virtual std::string toString() const = 0;
+    };
+    
+    class Type : public INamedEntity
+    {
+    public:
+        Type(std::string name, ::venum::VenumSet<EntityQualifier> entityQualifiers = { },
+             ReferenceType refType = nullptr)
+            : qualifiers(entityQualifiers), referenceType(refType), name(std::move(name))
+        {}
+        
+        //==============================================================================================================
+        std::string_view getIdentifier() const override { return name; }
+        
+        //==============================================================================================================
+        /**
+         *  Gets the qualifiers of this entity.
+         *  @return The qualifiers
+         */
+        const ::venum::VenumSet<EntityQualifier> &getQualifiers() const noexcept { return qualifiers; }
+        
+        /**
+         *  Gets the type of reference this type is or nullptr if it is not a reference.
+         *  @return The reference type
+         */
+        ReferenceType getReferenceType() const noexcept { return referenceType; }
+        
+        virtual std::string toString() const override
+        {
+            std::stringstream ss;
+            
+            for (const EntityQualifier &qualifier : qualifiers)
+            {
+                ss << qualifier->name() << " ";
+            }
+            
+            ss << name << (!referenceType ? "" : referenceType->getRepresentation());
+            
+            return ss.str();
+        }
+    
+    private:
+        ::venum::VenumSet<EntityQualifier> qualifiers;
+        ReferenceType referenceType;
+        std::string name;
+    };
+    
+    class Array : public Type
+    {
+    public:
+        Array(std::string name, const Type &underlyingType, std::vector<int> dimensions,
+              ::venum::VenumSet<EntityQualifier> entityQualifiers = {}, ReferenceType refType = nullptr)
+            : Type(std::move(name), entityQualifiers, refType),
+              underlyingType(underlyingType), dimensions(dimensions)
+        {
+            if (dynamic_cast<const Array*>(&underlyingType))
+            {
+                assert(false);
+                throw std::invalid_argument("The underlying type can't be an Array!");
+            }
+        }
+    
+        //==============================================================================================================
+        std::string toString() const override
+        {
+            std::stringstream ss;
+            ss << underlyingType.toString();
+            
+            for (int i = dimensions.size(); i--;)
+            {
+                ss << "[" << dimensions[i] << "]";
+            }
+            
+            return ss.str();
+        }
+    
+    private:
+        const Type       &underlyingType;
+        std::vector<int> dimensions;
+    };
+    
+    class Pointer : public Type
+    {
+    public:
+        Pointer(std::string name, const Type &underlyingType, int redirections,
+                ::venum::VenumSet<EntityQualifier> entityQualifiers = {}, ReferenceType refType = nullptr)
+            : Type(std::move(name), entityQualifiers, refType), underlyingType(underlyingType)
+        {
+            if (dynamic_cast<const Array*>(&underlyingType))
+            {
+                assert(false);
+                throw std::invalid_argument("The underlying type can't be an Array!");
+            }
+        }
+    
+        //==============================================================================================================
+        std::string toString() const override { return underlyingType.toString() + "*"; }
+    
+    private:
+        const Type &underlyingType;
+    };
+    
+    class Class;
+    class Namespace;
+    struct IMember : public INamedEntity
+    {
+        /**
+         *  Gets the class that wraps this entity or nullptr if it is a free entity.
+         *  @return The declaring class
+         */
+        virtual const Class *getDeclaringClass() const = 0;
+        
+        /**
+         *  Gets the declaring namespace this entity is a member of or nullptr if it is in the global namespace.
+         *  If this entity is part of a class, this will trace upwards until it hits the namespace it is in.
+         *
+         *  @return The declaring namespace
+         */
+        virtual const Namespace *getDeclaringNamespace() const = 0;
+        
+        /**
+         *  Gets the storage-class of this entity.
+         *  @return The storage class
+         */
+        virtual StorageClass getStorageGlass() const = 0;
+        
+        /**
+         *  Determines whether this entity is a possible constant expression or not.
+         *  @return True if it is constexpr
+         */
+        virtual bool isConstexpr() const = 0;
+        
+        /**
+         *  Gets the type of this entity.
+         *  @return The type
+         */
+        virtual const Type &getType() const = 0;
+    };
+    
+    class Field : public IMember
+    {
+    public:
+        Field(std::string identifier, const Type &entityType, Class *parentClass = nullptr,
+              Namespace *parentNamespace = nullptr, StorageClass storageClass = nullptr,
+              bool constantExpression = false)
+            : identifier(std::move(identifier)), entityType(entityType), parentClass(parentClass),
+              parentNamespace(parentNamespace), storageClass(storageClass), constantExpression(constantExpression)
+        {}
+    
+        //==============================================================================================================
+        std::string_view getIdentifier()          const noexcept override { return identifier;         }
+        const Class      *getDeclaringClass()     const noexcept override { return parentClass;        }
+        const Namespace  *getDeclaringNamespace() const noexcept override { return parentNamespace;    }
+        StorageClass     getStorageGlass()        const noexcept override { return storageClass;       }
+        bool             isConstexpr()            const noexcept override { return constantExpression; }
+        const Type       &getType()               const noexcept override { return entityType;         }
+    
+    private:
+        std::string identifier;
+        const Type  &entityType;
+        
+        Class     *parentClass;
+        Namespace *parentNamespace;
+        
+        StorageClass storageClass;
+        
+        bool constantExpression;
+    };
+    
+    class Function : public IMember
+    {
+    public:
+        explicit Function(std::string identifier, const Type &entityType, Class *parentClass = nullptr,
+                          Namespace *parentNamespace = nullptr, ::venum::VenumSet<EntityQualifier> qualifiers = {},
+                          StorageClass storageClass = nullptr, bool constantExpression = false)
+            : qualifiers(qualifiers), storageClass(storageClass), identifier(std::move(identifier)),
+              entityType(entityType), parentClass(parentClass), parentNamespace(parentNamespace),
+              constantExpression(constantExpression)
+        {}
+    
+        //==============================================================================================================
+        std::string_view getIdentifier()          const noexcept override { return identifier;         }
+        const Class      *getDeclaringClass()     const noexcept override { return parentClass;        }
+        const Namespace  *getDeclaringNamespace() const noexcept override { return parentNamespace;    }
+        StorageClass     getStorageGlass()        const noexcept override { return storageClass;       }
+        bool             isConstexpr()            const noexcept override { return constantExpression; }
+        const Type       &getType()               const noexcept override { return entityType;         }
+        
+        //==============================================================================================================
+        ::venum::VenumSet<EntityQualifier> getQualifiers() const { return qualifiers; }
+    
+    private:
+        ::venum::VenumSet<EntityQualifier> qualifiers;
+        StorageClass                       storageClass;
+        
+        std::string identifier;
+        const Type  &entityType;
+        
+        Class     *parentClass;
+        Namespace *parentNamespace;
+        
+        bool constantExpression;
+    };
+}

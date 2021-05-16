@@ -1,0 +1,6 @@
+add_subdirectory(sleepy-discord)
+add_subdirectory(juce)
+add_subdirectory(spdlog)
+add_subdirectory(doxygen)
+add_subdirectory(venum)
+add_subdirectory(jaut)
