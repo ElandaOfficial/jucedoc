@@ -45,10 +45,11 @@ public:
     
     //==================================================================================================================
     PagedEmbed() = default;
-    PagedEmbed(sld::Snowflake<sld::Channel> channelId, Filter filter = {});
+    explicit PagedEmbed(const sld::Snowflake<sld::Channel> &channelId, Filter filter = {});
     
     //==================================================================================================================
     void applyListWithFilter(const CacheMap &cache);
+    void applyListWithFilter(const CacheMap &cache, const juce::String &term);
     
     //==================================================================================================================
     sld::Snowflake<sld::Channel> getChannelId() const noexcept;
@@ -70,7 +71,7 @@ public:
     void reset();
     
     //==================================================================================================================
-    sld::Embed toEmbed() const;
+    sld::Embed toEmbed(const juce::String &title, std::uint32_t = 0) const;
     
 private:
     ResultVec resultCache;

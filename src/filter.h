@@ -58,6 +58,7 @@ private:
                          venum::VenumSet<TypeQualifier>,
                          venum::VenumSet<Virtualness>,
                          
+                         std::vector<juce::String>,
                          juce::String,
                          Flag,
                          
@@ -77,6 +78,7 @@ private:
             "quals",
             "virtual",
             
+            "bases",
             "cpath",
             "constexpr",
             
@@ -115,7 +117,7 @@ private:
         juce::String toString() const
         {
             juce::String output;
-            output << name.data() << ":";
+            output << "\"" << name.data() << "\":";
             
             output << std::visit([](auto &&val) -> juce::String
             {
@@ -123,29 +125,39 @@ private:
                 
                 if constexpr (jaut::sameTypeIgnoreTemplate_v<venum::VenumSet, T>)
                 {
-                    const T &set = static_cast<const T&>(val);
                     juce::String output;
                     
-                    for (const auto &str_opt : set)
+                    for (const auto &str_opt : static_cast<const T&>(val))
                     {
-                        output << str_opt->name().data() << ",";
+                        output << "\"" << str_opt->name().data() << "\",";
                     }
 
-                    return output.trimCharactersAtEnd(",");
+                    return "[" + output.trimCharactersAtEnd(",") + "]";
+                }
+                else if constexpr (jaut::sameTypeIgnoreTemplate_v<std::vector, T>)
+                {
+                    juce::String output;
+                    
+                    for (const auto &cont : static_cast<const T&>(val))
+                    {
+                        output << "\"" << juce::var(cont).toString() << "\"";
+                    }
+                    
+                    return "[" + output.trimCharactersAtEnd(",") + "]";
                 }
                 else if constexpr (std::is_same_v<Flag, T>)
                 {
-                    return val.isSet() ? (val.getValue() ? "true" : "false") : "unset";
+                    return val.isSet() ? (val.getValue() ? "true" : "false") : "null";
                 }
                 else if constexpr (   std::is_same_v<juce::String, T>
                                    || std::is_same_v<std::string,  T>
                                    || std::is_same_v<const char*,  T>)
                 {
-                    return val;
+                    return "\"" + val + "\"";
                 }
                 else if constexpr (venum::is_venum_type_v<T>)
                 {
-                    return val ? val->name().data() : "N/A";
+                    return val ? val->name().data() : "null";
                 }
                 else
                 {
@@ -186,6 +198,7 @@ public:
         Quals,
         Virtual,
         
+        Bases,
         CPath,
         Constexpr,
         
@@ -276,6 +289,18 @@ public:
                         set.emplace(constant);
                     }
                 }
+                else if constexpr (jaut::sameTypeIgnoreTemplate_v<std::vector, T>)
+                {
+                    juce::StringArray opt_values;
+                    opt_values.addTokens(m_val, ",");
+                    
+                    T &vec = std::get<T>(opt);
+                    
+                    for (const auto &opt_val : opt_values)
+                    {
+                        vec.emplace_back(static_cast<jaut::getTypeAt_t<T, 0>>(juce::var(opt_val)));
+                    }
+                }
                 else if constexpr (std::is_same_v<Flag, T>)
                 {
                     std::get<T>(opt);
@@ -306,14 +331,20 @@ public:
     const TypeMap::at<Idx>& get() const { return std::get<TypeMap::at<Idx>>(options[Idx].value); }
     
     //==================================================================================================================
-    juce::String toString() const
+    juce::String toString(bool pretty = false) const
     {
+        const char new_line = pretty ? '\n' : '\0';
+        const char *indent  = pretty ? "    " : "";
+        
         juce::String output;
+        output << "{" << new_line;
         
         for (const auto &opt : options)
         {
-            output << opt.toString() << " ";
+            output << indent << opt.toString() << "," << new_line;
         }
+        
+        output = output.trimCharactersAtEnd(",") + "}";
         
         return output.trim();
     }

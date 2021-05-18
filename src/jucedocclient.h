@@ -15,6 +15,7 @@
 #include <juce_core/juce_core.h>
 
 #include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <bitset>
 #include <stack>
@@ -97,6 +98,8 @@ class JuceDocClient : public sld::DiscordClient
 public:
     struct Options
     {
+        juce::String branch;
+        int pageCacheSize;
         bool cloneOnStart;
     };
     
@@ -109,7 +112,8 @@ public:
     //==================================================================================================================
     void onMessage (sld::Message) override;
     void onReady   (sld::Ready)   override;
-    void onError   (SleepyDiscord::ErrorCode, const std::string) override;
+    void onError   (SleepyDiscord::ErrorCode, std::string) override;
+    void onServer  (sld::Server) override;
     void onReaction(sld::Snowflake<sld::User>, sld::Snowflake<sld::Channel>, sld::Snowflake<sld::Message>,
                     sld::Emoji) override;
     
@@ -117,7 +121,7 @@ private:
     class EmbedCacheBuffer
     {
     public:
-        static constexpr std::size_t capacity = AppConfig::pageCacheSize;
+        explicit EmbedCacheBuffer(int);
         
         //==============================================================================================================
         void pop();
@@ -132,12 +136,13 @@ private:
         bool isEmpty() const noexcept;
         
         //==============================================================================================================
-        std::size_t size() const noexcept;
+        std::size_t capacity() const noexcept;
+        std::size_t size()     const noexcept;
     
     private:
-        std::array<std::pair<sld::Snowflake<sld::Message>, PagedEmbed>, capacity + 1> buffer;
-        int head {};
-        int tail {};
+        std::vector<std::pair<sld::Snowflake<sld::Message>, PagedEmbed>> buffer;
+        std::size_t head {};
+        std::size_t tail {};
     };
     
     //==================================================================================================================
@@ -146,18 +151,37 @@ private:
     
     //==================================================================================================================
     std::vector<std::unique_ptr<NamespaceDef>> namespaces;
-    venum::VenumMap<EntityType, DefVec> defCache;
+    venum::VenumMap<EntityType, DefVec>        defCache;
     
-    Options options;
+    Options      options;
     juce::String clientId;
     
     std::shared_ptr<spdlog::logger> logger { spdlog::stdout_color_mt(AppConfig::nameLogger.data()) };
     
     juce::File dirRoot { juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory() };
-    juce::File dirJuce { dirRoot.getChildFile("juce") };
-    juce::File dirDocs { dirJuce.getChildFile("docs/doxygen") };
+    juce::File dirJuce;
+    juce::File dirDocs;
     
     bool busy { false };
+    
+    //==================================================================================================================
+    template<class T, class Fn>
+    bool applyData(const sld::Snowflake<sld::Server> &id, Fn &&func)
+    {
+        try
+        {
+            std::forward<Fn>(func)(Storage::get<T>(id));
+            return true;
+        }
+        catch (std::exception &ex)
+        {
+#if JUCE_DEBUG
+            logger->template debug(ex.what());
+#endif
+        }
+        
+        return false;
+    }
     
     //==================================================================================================================
     juce::String getActivator() const;

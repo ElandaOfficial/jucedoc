@@ -18,6 +18,12 @@
 
 #include <filesystem>
 
+#if JUCE_DEBUG
+#   define JD_DBG(MSG) logger->debug(MSG)
+#else
+#   define JD_DBG(MSG) (void) 0
+#endif
+
 //======================================================================================================================
 class ScopedWorkingDirectory
 {
@@ -123,12 +129,18 @@ namespace
 //**********************************************************************************************************************
 // region EmbedCacheBuffer
 //======================================================================================================================
+JuceDocClient::EmbedCacheBuffer::EmbedCacheBuffer(int cacheSize)
+{
+    buffer.resize(cacheSize);
+}
+
+//======================================================================================================================
 void JuceDocClient::EmbedCacheBuffer::pop()
 {
     if (!isEmpty())
     {
         buffer[tail].second.reset();
-        tail = (tail + 1) % capacity;
+        tail = (tail + 1) % capacity();
     }
 }
 
@@ -141,43 +153,35 @@ void JuceDocClient::EmbedCacheBuffer::push(PagedEmbed &&embed)
     
     const sld::Snowflake<sld::Message> message_id = embed.getMessageId();
     buffer[head] = std::make_pair(message_id, std::move(embed));
-    head = (head + 1) % capacity;
+    head = (head + 1) % capacity();
 }
+
 //======================================================================================================================
 PagedEmbed *JuceDocClient::EmbedCacheBuffer::get(const sld::Snowflake<sld::Message> &messageId)
 {
-    for (auto &[msg_id, embed] : buffer)
-    {
-        if (msg_id == messageId)
-        {
-            return &embed;
-        }
-    }
-    
-    return nullptr;
+    auto it = std::find_if(buffer.begin(), buffer.end(), [messageId](auto &&page) { return messageId == page.first; });
+    return it != buffer.end() ? &it->second : nullptr;
 }
 
 const PagedEmbed *JuceDocClient::EmbedCacheBuffer::get(const sld::Snowflake<sld::Message> &messageId) const
 {
-    for (auto &[msg_id, embed] : buffer)
-    {
-        if (msg_id == messageId)
-        {
-            return &embed;
-        }
-    }
-    
-    return nullptr;
+    auto it = std::find_if(buffer.begin(), buffer.end(), [messageId](auto &&page) { return messageId == page.first; });
+    return it != buffer.end() ? &it->second : nullptr;
 }
 
 //======================================================================================================================
-bool JuceDocClient::EmbedCacheBuffer::isFull()  const noexcept { return (head + 1) % capacity == tail; }
+bool JuceDocClient::EmbedCacheBuffer::isFull()  const noexcept { return (head + 1) % capacity() == tail; }
 bool JuceDocClient::EmbedCacheBuffer::isEmpty() const noexcept { return tail == head; }
 
 //======================================================================================================================
+std::size_t JuceDocClient::EmbedCacheBuffer::capacity() const noexcept
+{
+    return buffer.size();
+}
+
 std::size_t JuceDocClient::EmbedCacheBuffer::size() const noexcept
 {
-    return (head >= tail ? head - tail : head - tail + capacity);
+    return (head >= tail ? head - tail : head - tail + capacity());
 }
 //======================================================================================================================
 // endregion EmbedCacheBuffer
@@ -193,7 +197,8 @@ constexpr int JuceDocClient::getEmbedIdBaseForCommand(Command command) noexcept
 //======================================================================================================================
 JuceDocClient::JuceDocClient(const juce::String &parToken, juce::String parClientId, Options options)
     : sld::DiscordClient(parToken.toStdString()),
-      options(options), clientId(std::move(parClientId))
+      options(std::move(options)), clientId(std::move(parClientId)),
+      dirJuce(dirRoot.getChildFile(this->options.branch)), dirDocs(dirJuce.getChildFile("docs/doxygen"))
 {
     dirRoot.setAsCurrentWorkingDirectory();
 
@@ -298,7 +303,8 @@ void JuceDocClient::onReady(sld::Ready readyData)
     
     for (const auto &guild : getServers().vector())
     {
-        (void) Storage::createFor(guild.ID);
+        (void) Storage::createFor(guild.ID, EmbedCacheBuffer(options.pageCacheSize));
+        JD_DBG("Registered server for id: " + guild.ID.string());
     }
     
     {
@@ -320,6 +326,14 @@ void JuceDocClient::onReady(sld::Ready readyData)
     logger->info("JuceDoc is now ready to be used.");
 }
 
+void JuceDocClient::onError(sld::ErrorCode, const std::string errorMessage) { logger->error(errorMessage); }
+
+void JuceDocClient::onServer(sld::Server server)
+{
+    (void) Storage::createFor(server.ID, EmbedCacheBuffer(options.pageCacheSize));
+    JD_DBG("Registered new server for id: " + server.ID.string());
+}
+
 void JuceDocClient::onReaction(sld::Snowflake<sld::User> userId, sld::Snowflake<sld::Channel> channelId,
                                sld::Snowflake<sld::Message> messageId, sld::Emoji emote)
 {
@@ -329,18 +343,18 @@ void JuceDocClient::onReaction(sld::Snowflake<sld::User> userId, sld::Snowflake<
     }
     
     const sld::Message message = getMessage(channelId, messageId);
-    EmbedCacheBuffer   &embeds = Storage::get<EmbedCacheBuffer>(message.serverID);
-    
-    if (PagedEmbed *const embed = embeds.get(messageId))
+        
+    applyData<EmbedCacheBuffer>(getChannel(channelId).cast().serverID, [this, &message, &emote, &userId](auto &&cache)
     {
-        removeReaction(channelId, messageId, emote.name, userId);
-        embed->setPage(emote.name == PagedEmbed::emoteLastPage ? PagedEmbed::PageAction::Back
-                                                               : PagedEmbed::PageAction::Forward);
-        editMessage(message, "", embed->toEmbed());
-    }
+        if (PagedEmbed *const embed = cache.get(message.ID))
+        {
+            removeReaction(message.channelID, message.ID, emote.name, userId);
+            embed->setPage(emote.name == PagedEmbed::emoteLastPage ? PagedEmbed::PageAction::Back
+                                                                   : PagedEmbed::PageAction::Forward);
+            editMessage(message, "", embed->toEmbed());
+        }
+    });
 }
-
-void JuceDocClient::onError(sld::ErrorCode, const std::string errorMessage) { logger->error(errorMessage); }
 
 //======================================================================================================================
 juce::String JuceDocClient::getActivator() const { return "<@!" + clientId + ">"; }
@@ -418,10 +432,16 @@ void JuceDocClient::showHelpPage(sld::Message &message, const juce::String &cmd)
 
 bool JuceDocClient::processCommand(int commandId, sld::Message &message, juce::StringArray &args)
 {
-    const juce::String query = args[0];
+    juce::String query;
     
     if (commandId != Command::List.ordinal())
     {
+        if (args.isEmpty() || args.getReference(0).matchesWildcard("?:?", true))
+        {
+            return false;
+        }
+        
+        query = std::move(args.getReference(0));
         args.remove(0);
     }
     
@@ -445,31 +465,80 @@ bool JuceDocClient::processCommand(int commandId, sld::Message &message, juce::S
     if (commandId == Command::List)
     {
         PagedEmbed embed(message.channelID, filter);
-        embed.setMaxItemsPerPage(6);
+        embed.setMaxItemsPerPage(5);
         embed.applyListWithFilter(defCache);
-
-
-#if JUCE_DEBUG
-        logger->debug("Generating embed with filter: " + filter.toString().toStdString());
-#endif
         
-        sendMessage(message.channelID, "", embed.toEmbed(), sld::TTS::Default, {
-        [this, paged = embed](sld::ObjectResponse<sld::Message> response) mutable
-        {
-            paged.setMessageId(response.cast().ID);
-            Storage::get<EmbedCacheBuffer>(response.cast().serverID).push(std::move(paged));
-            
-            addReaction(response.cast().channelID, response.cast().ID, PagedEmbed::emoteLastPage.data());
-            addReaction(response.cast().channelID, response.cast().ID, PagedEmbed::emoteNextPage.data());
-        }});
+        JD_DBG("Generating embed with filters: " + filter.toString().toStdString());
+        
+        sendMessage(message.channelID, "", embed.toEmbed("Entity List", 0xFFFF00u), sld::TTS::Default, {
+            [this, embed, sid = message.serverID](sld::ObjectResponse<sld::Message> response) mutable
+            {
+                if (embed.getMaxPages() <= 1)
+                {
+                    return;
+                }
+                
+                if (response.error())
+                {
+                    JD_DBG("Error sending message: " + response.text);
+                    return;
+                }
+                
+                const sld::Message msg = response;
+                
+                (void) applyData<EmbedCacheBuffer>(sid, [this, &embed, &msg](auto &&cacheBuffer)
+                {
+                    JD_DBG("Added embed to cache for message: '" + msg.ID.string() + "'");
+                    
+                    embed.setMessageId(msg.ID);
+                    cacheBuffer.push(std::move(embed));
+                    
+                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteLastPage.data());
+                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteNextPage.data());
+                });
+            }
+        });
     }
     else if (commandId == Command::Find)
     {
+        PagedEmbed embed(message.channelID, filter);
+        embed.setMaxItemsPerPage(5);
+        embed.applyListWithFilter(defCache, query);
     
+        JD_DBG("Generating embed with filters: " + filter.toString().toStdString());
+    
+        sendMessage(message.channelID, "", embed.toEmbed("Symbols found for: " + query, 0x00FF00u), sld::TTS::Default, {
+            [this, embed, sid = message.serverID](sld::ObjectResponse<sld::Message> response) mutable
+            {
+                if (embed.getMaxPages() <= 1)
+                {
+                    return;
+                }
+            
+                if (response.error())
+                {
+                    JD_DBG("Error sending message: " + response.text);
+                    return;
+                }
+                
+                const sld::Message msg = response;
+                
+                (void) applyData<EmbedCacheBuffer>(sid, [this, &embed, &msg](auto &&cacheBuffer)
+                {
+                    JD_DBG("Added embed to cache for message: '" + msg.ID.string() + "'");
+                    
+                    embed.setMessageId(msg.ID);
+                    cacheBuffer.push(std::move(embed));
+                    
+                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteLastPage.data());
+                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteNextPage.data());
+                });
+            }
+        });
     }
     else if (commandId == Command::Show)
     {
-    
+        sld::Embed embed;
     }
     else if (commandId == Command::Refresh)
     {
@@ -562,11 +631,13 @@ void JuceDocClient::createFileStructure()
 //======================================================================================================================
 void JuceDocClient::cloneRepository() const
 {
+    const juce::String &branch = options.branch;
+    
     dirJuce.deleteRecursively();
-    logger->info("Cloning latest juce develop commit...");
+    logger->info("Cloning latest juce " + branch.toStdString() + " commit...");
     
     juce::ChildProcess cloneProcess;
-    cloneProcess.start("git clone --branch develop https://github.com/juce-framework/juce.git juce");
+    cloneProcess.start("git clone --branch " + branch + " https://github.com/juce-framework/juce.git " + branch);
     cloneProcess.waitForProcessToFinish(-1);
 }
 //======================================================================================================================

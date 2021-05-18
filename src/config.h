@@ -8,7 +8,7 @@ struct AppConfig
     static constexpr std::string_view urlJuceDocsBase = "https://docs.juce.com/develop/";
     static constexpr std::string_view nameLogger      = "Main";
     
-    static constexpr int pageCacheSize = 30;
+    static constexpr int defaultPageCacheSize = 30;
 };
 
 #if __JETBRAINS_IDE__
