@@ -48,7 +48,6 @@ public:
     explicit PagedEmbed(const sld::Snowflake<sld::Channel> &channelId, Filter filter = {});
     
     //==================================================================================================================
-    void applyListWithFilter(const CacheMap &cache);
     void applyListWithFilter(const CacheMap &cache, const juce::String &term);
     
     //==================================================================================================================

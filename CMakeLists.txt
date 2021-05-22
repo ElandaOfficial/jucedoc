@@ -25,9 +25,9 @@ juce_add_console_app(JuceDoc
 target_include_directories(JuceDoc
     PRIVATE
         ${PROJECT_SOURCE_DIR}/lib/doxygen/src
-        ${PROJECT_SOURCE_DIR}/libversion
-        ${GENERATED_SRC}
-        lib/zip_view)
+        ${PROJECT_SOURCE_DIR}/lib/doxygen/libversion
+        ${PROJECT_SOURCE_DIR}/lib/doxygen/libmd5
+        ${GENERATED_SRC})
 
 target_compile_definitions(JuceDoc
     PRIVATE

@@ -2,4 +2,5 @@ target_sources(JuceDoc
     PRIVATE
         main.cpp
         jucedocclient.cpp
-        pagedembed.cpp)
+        pagedembed.cpp
+        processsourcefiles.cpp)

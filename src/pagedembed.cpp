@@ -1,10 +1,13 @@
 
 #include "pagedembed.h"
+
 #include "config.h"
+#include "linkresolve.h"
 
 #include <namespacedef.h>
 #include <classlist.h>
 #include <sleepy_discord/embed.h>
+#include <groupdef.h>
 
 #include <cmath>
 
@@ -67,26 +70,82 @@ namespace
         return true;
     }
     
-    juce::String sanitiseUrl(std::string_view name)
+    bool searchForBaseDfs(const std::vector<std::string_view> &bases, const ClassDef &clazz)
     {
-        name.remove_prefix(6);
-        return juce::String(name.begin(), name.size()).replace("_", "__").replace("::", "_1_1");
+        for (const auto &base : clazz.baseClasses())
+        {
+            const ClassDef &base_def = *base.classDef;
+            
+            for (const auto &base_name : bases)
+            {
+                if (base_name == base_def.qualifiedName().data())
+                {
+                    return true;
+                }
+            }
+            
+            if (!base_def.baseClasses().empty())
+            {
+                if (searchForBaseDfs(bases, base_def))
+                {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
     
-    juce::String getUrlFromEntity(EntityType entityType, const Definition &def)
+    bool classHasBase(const ClassDef &clazz, const std::vector<juce::String> &bases)
     {
-        juce::String output;
-        
-        if (entityType == EntityType::Namespace)
+        if (bases.empty())
         {
-            output = "namespace";
-        }
-        else if (entityType == EntityType::Class)
-        {
-            output = static_cast<const ClassDef&>(def).compoundTypeString().lower().data();
+            return true;
         }
         
-        return output + sanitiseUrl(def.qualifiedName().data());
+        std::vector<std::string_view> nested;
+        std::vector<std::string_view> locals;
+        
+        for (const auto &base_name : bases)
+        {
+            if (base_name[0] != '@')
+            {
+                nested.emplace_back(base_name.toRawUTF8());
+            }
+            else
+            {
+                std::string_view view(base_name.toRawUTF8());
+                view.remove_prefix(1);
+                
+                locals.emplace_back(view);
+            }
+        }
+        
+        for (const auto &base : clazz.baseClasses())
+        {
+            const ClassDef &base_def = *base.classDef;
+            
+            for (const auto &vec : { &nested, &locals })
+            {
+                for (const auto &base_name : *vec)
+                {
+                    if (base_name == base_def.qualifiedName().data())
+                    {
+                        return true;
+                    }
+                }
+            }
+            
+            if (!nested.empty())
+            {
+                if (searchForBaseDfs(nested, base_def))
+                {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
 }
 
@@ -98,142 +157,6 @@ PagedEmbed::PagedEmbed(const sld::Snowflake<sld::Channel> &channelId, Filter fil
 {}
 
 //======================================================================================================================
-void PagedEmbed::applyListWithFilter(const CacheMap &cache)
-{
-    // Filters
-    const std::string_view            &class_path = filter.get<Filter::CPath>().toRawUTF8();
-    const venum::VenumSet<EntityType> &types      = filter.get<Filter::Entity>();
-    
-    if (types.contains(EntityType::Namespace))
-    {
-        for (const auto &def : cache[EntityType::Namespace])
-        {
-            const auto &ns_def = static_cast<const NamespaceDef&>(def.get());
-            
-            if (ns_def.qualifiedName().startsWith(class_path.data()))
-            {
-                (void) resultCache.emplace_back(EntityType::Namespace, ns_def);
-            }
-        }
-    }
-    
-    if (types.contains(EntityType::Class))
-    {
-        const venum::VenumSet<CompoundType> &ctypes = filter.get<Filter::CType>();
-        const std::vector<juce::String>     &bases  = filter.get<Filter::Bases>();
-        
-        for (const auto &def : cache[EntityType::Class])
-        {
-            const auto &cs_def = static_cast<const ClassDef&>(def.get());
-            
-            if (cs_def.qualifiedName().startsWith(class_path.data()))
-            {
-                if (ctypes.contains(CompoundType::valueOf(cs_def.compoundTypeString().str(), true)))
-                {
-                    if (!bases.empty())
-                    {
-                        const BaseClassList &base_classes = cs_def.baseClasses();
-                        const auto it = std::find_if(base_classes.begin(), base_classes.end(),
-                            [&bases](const BaseClassDef &baseClass)
-                            {
-                                return std::find_if(bases.begin(), bases.end(), [&baseClass](const juce::String &name)
-                                {
-                                    return baseClass.classDef->qualifiedName() == name.toRawUTF8();
-                                }) != bases.end();
-                            });
-                        
-                        if (it == base_classes.end())
-                        {
-                            continue;
-                        }
-                    }
-                    
-                    (void) resultCache.emplace_back(EntityType::Class, cs_def);
-                }
-            }
-        }
-    }
-    
-    if (types.contains(EntityType::Enum))
-    {
-        // Filters
-        const venum::VenumSet<CompoundType> &ctypes = filter.get<Filter::CType>();
-        
-        for (const auto &def : cache[EntityType::Enum])
-        {
-            const auto &en_def = static_cast<const MemberDef&>(def.get());
-            
-            if (en_def.qualifiedName().startsWith(class_path.data()))
-            {
-                if (en_def.isEnumStruct() ? ctypes.contains(CompoundType::EnumClass)
-                                          : ctypes.contains(CompoundType::Enum))
-                {
-                    (void) resultCache.emplace_back(EntityType::Enum, en_def);
-                }
-            }
-        }
-    }
-    
-    if (types.contains(EntityType::Function))
-    {
-        for (const auto &def : cache[EntityType::Function])
-        {
-            const auto &fn_def = static_cast<const MemberDef&>(def.get());
-            
-            if ((fn_def.qualifiedName().startsWith(class_path.data()))
-                && ::hasMemberSpecs<true>(fn_def, filter))
-            {
-                (void) resultCache.emplace_back(EntityType::Function, fn_def);
-            }
-        }
-    }
-    
-    if (types.contains(EntityType::Field))
-    {
-        for (const auto &def : cache[EntityType::Field])
-        {
-            const auto &var_def = static_cast<const MemberDef&>(def.get());
-            
-            if ((var_def.qualifiedName().startsWith(class_path.data()))
-                && ::hasMemberSpecs<false>(var_def, filter))
-            {
-                (void) resultCache.emplace_back(EntityType::Field, var_def);
-            }
-        }
-    }
-    
-    if (types.contains(EntityType::TypeAlias))
-    {
-        for (const auto &def : cache[EntityType::TypeAlias])
-        {
-            const auto &aka_def = static_cast<const MemberDef&>(def.get());
-            
-            if (aka_def.qualifiedName().startsWith(class_path.data()))
-            {
-                (void) resultCache.emplace_back(EntityType::TypeAlias, aka_def);
-            }
-        }
-    }
-    
-    if (const auto &sort_type = filter.get<Filter::Sort>())
-    {
-        if (sort_type == SortType::Asc)
-        {
-            std::sort(resultCache.begin(), resultCache.end(), [](const auto &a, const auto &b)
-            {
-                return a.second.get().qualifiedName() < b.second.get().qualifiedName();
-            });
-        }
-        else if (sort_type == SortType::Desc)
-        {
-            std::sort(resultCache.begin(), resultCache.end(), [](const auto &a, const auto &b)
-            {
-                return b.second.get().qualifiedName() < a.second.get().qualifiedName();
-            });
-        }
-    }
-}
-
 void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &term)
 {
     // Filters
@@ -246,7 +169,8 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
         {
             const auto &ns_def = static_cast<const NamespaceDef&>(def.get());
             
-            if (ns_def.qualifiedName().startsWith(class_path.data()) && ns_def.localName().contains(term.toRawUTF8()))
+            if (ns_def.qualifiedName().startsWith(class_path.data())
+                && (term.isEmpty() || ns_def.localName().contains(term.toRawUTF8())))
             {
                 (void) resultCache.emplace_back(EntityType::Namespace, ns_def);
             }
@@ -262,28 +186,12 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
         {
             const auto &cs_def = static_cast<const ClassDef&>(def.get());
             
-            if (cs_def.qualifiedName().startsWith(class_path.data()) && cs_def.localName().contains(term.toRawUTF8()))
+            if (cs_def.qualifiedName().startsWith(class_path.data())
+                && (term.isEmpty() || cs_def.localName().contains(term.toRawUTF8()))
+                && ::classHasBase(cs_def, bases))
             {
                 if (ctypes.contains(CompoundType::valueOf(cs_def.compoundTypeString().str(), true)))
                 {
-                    if (!bases.empty())
-                    {
-                        const BaseClassList &base_classes = cs_def.baseClasses();
-                        const auto it = std::find_if(base_classes.begin(), base_classes.end(),
-                             [&bases](const BaseClassDef &baseClass)
-                             {
-                                 return std::find_if(bases.begin(), bases.end(), [&baseClass](const juce::String &name)
-                                 {
-                                     return baseClass.classDef->qualifiedName() == name.toRawUTF8();
-                                 }) != bases.end();
-                             });
-                        
-                        if (it == base_classes.end())
-                        {
-                            continue;
-                        }
-                    }
-                    
                     (void) resultCache.emplace_back(EntityType::Class, cs_def);
                 }
             }
@@ -299,7 +207,8 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
         {
             const auto &en_def = static_cast<const MemberDef&>(def.get());
             
-            if (en_def.qualifiedName().startsWith(class_path.data()) && en_def.localName().contains(term.toRawUTF8()))
+            if (en_def.qualifiedName().startsWith(class_path.data())
+                && (term.isEmpty() || en_def.localName().contains(term.toRawUTF8())))
             {
                 if (en_def.isEnumStruct() ? ctypes.contains(CompoundType::EnumClass)
                                           : ctypes.contains(CompoundType::Enum))
@@ -317,7 +226,8 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
             const auto &fn_def = static_cast<const MemberDef&>(def.get());
             
             if ((fn_def.qualifiedName().startsWith(class_path.data()))
-                && ::hasMemberSpecs<true>(fn_def, filter) && fn_def.localName().contains(term.toRawUTF8()))
+                && ::hasMemberSpecs<true>(fn_def, filter)
+                && (term.isEmpty() || fn_def.localName().contains(term.toRawUTF8())))
             {
                 (void) resultCache.emplace_back(EntityType::Function, fn_def);
             }
@@ -331,7 +241,8 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
             const auto &var_def = static_cast<const MemberDef&>(def.get());
             
             if ((var_def.qualifiedName().startsWith(class_path.data()))
-                && ::hasMemberSpecs<false>(var_def, filter) && var_def.localName().contains(term.toRawUTF8()))
+                && ::hasMemberSpecs<false>(var_def, filter)
+                && (term.isEmpty() || var_def.localName().contains(term.toRawUTF8())))
             {
                 (void) resultCache.emplace_back(EntityType::Field, var_def);
             }
@@ -344,7 +255,8 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
         {
             const auto &aka_def = static_cast<const MemberDef&>(def.get());
             
-            if (aka_def.qualifiedName().startsWith(class_path.data()) && aka_def.localName().contains(term.toRawUTF8()))
+            if (aka_def.qualifiedName().startsWith(class_path.data())
+                && (term.isEmpty() || aka_def.localName().contains(term.toRawUTF8())))
             {
                 (void) resultCache.emplace_back(EntityType::TypeAlias, aka_def);
             }
@@ -424,54 +336,84 @@ sld::Embed PagedEmbed::toEmbed(const juce::String &title, std::uint32_t colour) 
     sld::Embed embed;
     embed.title = title.toRawUTF8();
     embed.color = colour;
-    embed.fields.reserve(2 + num_items);
+    embed.fields.reserve(3 + num_items);
     embed.fields.emplace_back("Page",  std::to_string(currentPage + 1) + "/" + std::to_string(getMaxPages()), true);
     embed.fields.emplace_back("Items",
                               std::to_string(start_index + static_cast<int>(maxItemsPerPage > 0)) + " to "
                                   + std::to_string(start_index + num_items),
                               true);
+    embed.fields.emplace_back("Of", std::to_string(getNumItems()), true);
     
     for (int i = start_index; i < (start_index + num_items); ++i)
     {
         const ResultDef &def = resultCache[i];
         
         juce::String field_desc;
-        field_desc << "Path: " << def.second.get().qualifiedName().data() << "\n"
-                   << "Type: " << def.first->name()           .data() << "\n";
+        field_desc << "**Path:** " << def.second.get().qualifiedName().data() << "\n"
+                   << "**Type:** " << def.first->name()               .data() << "\n";
         
-        if (const Definition *scope = def.second.get().getOuterScope())
+        juce::String module = "All";
+    
+        const Definition *group_def = &def.second.get();
+    
+        if (dynamic_cast<const MemberDef*>(&def.second.get()))
         {
-            field_desc << "Parent: " << scope->qualifiedName().data() << "\n";
+            group_def = def.second.get().getOuterScope();
+        }
+    
+        if (group_def)
+        {
+            if (const auto &groups = group_def->partOfGroups(); !groups.empty() && group_def->localName() != "juce")
+            {
+                module.clear();
+                module << groups[0]->groupTitle().rawData() << " ("
+                       << juce::String(groups[0]->localName().data()).upToFirstOccurrenceOf("-", false, true) << ")";
+            }
         }
         else
         {
-            field_desc << "Parent: [root]\n";
+            module = "Unknown";
         }
+        
+        field_desc << "**Module:** " << module << "\n";
+        
+        if (const Definition *scope = def.second.get().getOuterScope())
+        {
+            field_desc << "**Parent:** " << scope->qualifiedName().data() << "\n";
+        }
+        else
+        {
+            field_desc << "**Parent:** None\n";
+        }
+        
+        juce::String description;
         
         if (def.second.get().hasBriefDescription() && !def.second.get().briefDescription().isEmpty())
         {
-            field_desc << "Doc: " << juce::String(def.second.get().briefDescription().data()) << "\n";
+            description = juce::String(def.second.get().briefDescription().data());
         }
         else if (def.second.get().hasDocumentation() && !def.second.get().documentation().isEmpty())
         {
             const juce::String doc = def.second.get().documentation().data();
-            
-            field_desc << "Doc: " << juce::String(doc).substring(0, 60);
+    
+            description = juce::String(doc).substring(0, 60);
             
             if (doc.length() > 60)
             {
-                field_desc += "...";
+                description << "...";
             }
-            
-            field_desc += "\n";
-        }
-        else
-        {
-            field_desc << "Doc: No docs available \n";
         }
         
-        field_desc << "[Go to official docs](" << AppConfig::urlJuceDocsBase.data()
-                                               << ::getUrlFromEntity(def.first, def.second) << ".html)";
+        if (description.isEmpty() || description == "/internal")
+        {
+            description = "No docs available";
+        }
+        
+        field_desc << "**Doc:** " << description << "\n"
+                   << "[Go to official docs](" << AppConfig::urlJuceDocsBase.data()
+                                               << ::getUrlFromEntity(def.first, def.second) << ")";
+        
+        field_desc = field_desc.substring(0, std::min(1024, field_desc.length()));
         
         embed.fields.emplace_back(def.second.get().localName().data(), field_desc.toRawUTF8(), false);
     }

@@ -1,6 +1,11 @@
 
 #pragma once
 
+#include <classdef.h>
+#include <definition.h>
+#include <memberdef.h>
+#include <namespacedef.h>
+
 #include <venum.h>
 
 VENUM_CREATE(EntityType,

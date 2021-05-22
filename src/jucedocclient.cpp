@@ -2,19 +2,22 @@
 #include "jucedocclient.h"
 
 #include "filter.h"
+#include "linkresolve.h"
+#include "processsourcefiles.h"
 
 #include <dir.h>
 #include <doxygen.h>
 #include <outputgen.h>
 #include <parserintf.h>
 #include <classdef.h>
-#include <namespacedef.h>
 #include <filedef.h>
 #include <util.h>
 #include <classlist.h>
 #include <config.h>
 #include <filename.h>
 #include <membername.h>
+#include <groupdef.h>
+#include <dotclassgraph.h>
 
 #include <filesystem>
 
@@ -120,6 +123,24 @@ namespace
             }
         }
     }
+    
+    //==================================================================================================================
+    template<class ...TVecs>
+    std::tuple<const DefVec*, const Definition*> findDefinition(const juce::String &term, const TVecs &...vecs)
+    {
+        for (const auto &vec : { &vecs... })
+        {
+            for (const auto &def : *vec)
+            {
+                if (def.get().qualifiedName() == term.toRawUTF8())
+                {
+                    return std::make_tuple(vec, &def.get());
+                }
+            }
+        }
+        
+        return std::make_tuple(static_cast<const DefVec*>(nullptr), static_cast<const Definition*>(nullptr));
+    }
 }
 
 //**********************************************************************************************************************
@@ -187,13 +208,6 @@ std::size_t JuceDocClient::EmbedCacheBuffer::size() const noexcept
 // endregion EmbedCacheBuffer
 //**********************************************************************************************************************
 // region JuceDocClient
-//======================================================================================================================
-constexpr int JuceDocClient::getEmbedIdBaseForCommand(Command command) noexcept
-{
-    constexpr int magic_number = 30390340;
-    return (command->ordinal() * 100000000) + magic_number;
-}
-
 //======================================================================================================================
 JuceDocClient::JuceDocClient(const juce::String &parToken, juce::String parClientId, Options options)
     : sld::DiscordClient(parToken.toStdString()),
@@ -351,7 +365,9 @@ void JuceDocClient::onReaction(sld::Snowflake<sld::User> userId, sld::Snowflake<
             removeReaction(message.channelID, message.ID, emote.name, userId);
             embed->setPage(emote.name == PagedEmbed::emoteLastPage ? PagedEmbed::PageAction::Back
                                                                    : PagedEmbed::PageAction::Forward);
-            editMessage(message, "", embed->toEmbed());
+            
+            const sld::Embed pre_embed = message.embeds[0];
+            editMessage(message, "", embed->toEmbed(pre_embed.title, pre_embed.color));
         }
     });
 }
@@ -375,7 +391,7 @@ void JuceDocClient::showHelpPage(sld::Message &message, const juce::String &cmd)
         embed.title       = ":notebook_with_decorative_cover: Command Help";
         embed.type        = "rich";
         embed.description = "A list of commands you can use:";
-        embed.color       = 0x00ff00;
+        embed.color       = Colours::Help;
         
         embed.fields.reserve(Command::values.size());
         
@@ -417,7 +433,7 @@ void JuceDocClient::showHelpPage(sld::Message &message, const juce::String &cmd)
                 sld::Embed embed;
                 embed.title       = emote_title.toStdString() + "Help for '" + name.toStdString() + "'";
                 embed.description = command->getDescription();
-                embed.color       = 0x00ff00;
+                embed.color       = Colours::Help;
                 embed.fields      = {
                     { "Usage",        command->getUsage().data(), false },
                     { "Needed roles", roles.toStdString(),        false }
@@ -436,113 +452,322 @@ bool JuceDocClient::processCommand(int commandId, sld::Message &message, juce::S
     
     if (commandId != Command::List.ordinal())
     {
-        if (args.isEmpty() || args.getReference(0).matchesWildcard("?:?", true))
+        if (args.isEmpty())
         {
             return false;
         }
         
-        query = std::move(args.getReference(0));
+        std::swap(query, args.getReference(0));
         args.remove(0);
     }
     
-    Filter filter;
-    
-    try
+    if (commandId == Command::Show)
     {
-        filter = Filter::createFromInput(args);
-    }
-    catch (std::invalid_argument &ex)
-    {
-        if (juce::String(ex.what()).isEmpty())
+        const DefVec &list_namespace = defCache[EntityType::Namespace];
+        const DefVec &list_class     = defCache[EntityType::Class];
+        const DefVec &list_enum      = defCache[EntityType::Enum];
+        const DefVec &list_func      = defCache[EntityType::Function];
+        const DefVec &list_var       = defCache[EntityType::Field];
+        const DefVec &list_alias     = defCache[EntityType::TypeAlias];
+        
+        const juce::String last_name = query.fromLastOccurrenceOf("::", false, true);
+        const Definition   *def      = nullptr;
+        EntityType         type;
+        
+        if (last_name.isEmpty())
         {
-            return false;
+            const std::tuple<const DefVec*, const Definition*> found
+                = ::findDefinition(query, list_namespace, list_class, list_enum, list_func, list_var, list_alias);
+            
+            if (const auto *const vec = std::get<0>(found))
+            {
+                type = std::find_if(defCache.begin(), defCache.end(), [vec](auto &&entry)
+                {
+                    return vec == &entry.second;
+                })->first;
+                def = std::get<1>(found);
+            }
+        }
+        else
+        {
+            // Likely a function, variable or namespace
+            if (juce::CharacterFunctions::isLowerCase(last_name[0]))
+            {
+                const std::tuple<const DefVec*, const Definition*> found
+                    = ::findDefinition(query, list_func, list_namespace, list_var, list_class, list_enum, list_alias);
+                
+                if (const auto *const vec = std::get<0>(found))
+                {
+                    type = std::find_if(defCache.begin(), defCache.end(), [vec](auto &&entry)
+                    {
+                        return vec == &entry.second;
+                    })->first;
+                    def = std::get<1>(found);
+                }
+            }
+            else
+            {
+                const std::tuple<const DefVec*, const Definition*> found
+                    = ::findDefinition(query, list_class, list_enum, list_alias, list_func, list_namespace, list_var);
+                
+                if (const auto *const vec = std::get<0>(found))
+                {
+                    type = std::find_if(defCache.begin(), defCache.end(), [vec](auto &&entry)
+                    {
+                        return vec == &entry.second;
+                    })->first;
+                    def = std::get<1>(found);
+                }
+            }
         }
         
-        sendMessage(message.channelID, ex.what());
-        return true;
-    }
-    
-    if (commandId == Command::List)
-    {
-        PagedEmbed embed(message.channelID, filter);
-        embed.setMaxItemsPerPage(5);
-        embed.applyListWithFilter(defCache);
+        if (!def)
+        {
+            sendMessage(message.channelID, "Sorry, I could not find any entity for: " + query.toStdString() + ". :/");
+            return true;
+        }
         
-        JD_DBG("Generating embed with filters: " + filter.toString().toStdString());
-        
-        sendMessage(message.channelID, "", embed.toEmbed("Entity List", 0xFFFF00u), sld::TTS::Default, {
-            [this, embed, sid = message.serverID](sld::ObjectResponse<sld::Message> response) mutable
-            {
-                if (embed.getMaxPages() <= 1)
-                {
-                    return;
-                }
-                
-                if (response.error())
-                {
-                    JD_DBG("Error sending message: " + response.text);
-                    return;
-                }
-                
-                const sld::Message msg = response;
-                
-                (void) applyData<EmbedCacheBuffer>(sid, [this, &embed, &msg](auto &&cacheBuffer)
-                {
-                    JD_DBG("Added embed to cache for message: '" + msg.ID.string() + "'");
-                    
-                    embed.setMessageId(msg.ID);
-                    cacheBuffer.push(std::move(embed));
-                    
-                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteLastPage.data());
-                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteNextPage.data());
-                });
-            }
-        });
-    }
-    else if (commandId == Command::Find)
-    {
-        PagedEmbed embed(message.channelID, filter);
-        embed.setMaxItemsPerPage(5);
-        embed.applyListWithFilter(defCache, query);
-    
-        JD_DBG("Generating embed with filters: " + filter.toString().toStdString());
-    
-        sendMessage(message.channelID, "", embed.toEmbed("Symbols found for: " + query, 0x00FF00u), sld::TTS::Default, {
-            [this, embed, sid = message.serverID](sld::ObjectResponse<sld::Message> response) mutable
-            {
-                if (embed.getMaxPages() <= 1)
-                {
-                    return;
-                }
-            
-                if (response.error())
-                {
-                    JD_DBG("Error sending message: " + response.text);
-                    return;
-                }
-                
-                const sld::Message msg = response;
-                
-                (void) applyData<EmbedCacheBuffer>(sid, [this, &embed, &msg](auto &&cacheBuffer)
-                {
-                    JD_DBG("Added embed to cache for message: '" + msg.ID.string() + "'");
-                    
-                    embed.setMessageId(msg.ID);
-                    cacheBuffer.push(std::move(embed));
-                    
-                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteLastPage.data());
-                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteNextPage.data());
-                });
-            }
-        });
-    }
-    else if (commandId == Command::Show)
-    {
         sld::Embed embed;
+        embed.title = def->name().data();
+        embed.url   = (AppConfig::urlJuceDocsBase.data() + options.branch + "/"
+                       + getUrlFromEntity(type, *def)).toRawUTF8();
+        embed.color = Colours::Show;
+        
+        juce::String description;
+        description << (def->documentation().isEmpty()
+                           ? (def->briefDescription().isEmpty() ? "No description": def->briefDescription())
+                           : def->documentation()).data();
+        
+        juce::String definition;
+        
+        if (const MemberDef *member = dynamic_cast<const MemberDef*>(def))
+        {
+            definition << member->definition().data();
+            
+            if (member->argumentList().hasParameters())
+            {
+                definition << "(";
+                
+                const ArgumentList &arg_list = member->argumentList();
+                
+                for (auto it = arg_list.begin(); it != arg_list.end(); ++it)
+                {
+                    const int index = std::distance(arg_list.begin(), it);
+                    
+                    if (member->isDefine())
+                    {
+                        definition << it->type.data();
+                        
+                        if (index < (arg_list.size() - 1))
+                        {
+                            definition << ",";
+                        }
+                    }
+                    else
+                    {
+                        definition << it->attrib.data();
+                        
+                        if (it->type != "...")
+                        {
+                            definition << juce::String(it->type.data()).replace(" *", "*").replace(" &", "&");
+                        }
+                        
+                        if (!it->name.isEmpty() || it->type == "...")
+                        {
+                            if (it->name.isEmpty())
+                            {
+                                definition << it->type.data();
+                            }
+                            else
+                            {
+                                definition << " " << it->name.data();
+                            }
+                        }
+                        
+                        definition << it->array.data();
+                        
+                        if (!it->defval.isEmpty())
+                        {
+                            definition << " = " << it->defval.data();
+                        }
+    
+                        if (index < (arg_list.size() - 1))
+                        {
+                            definition << ",";
+                        }
+                    }
+                }
+                
+                definition << ")" << member->extraTypeChars().data();
+                
+                if (arg_list.constSpecifier())
+                {
+                    definition << " const ";
+                }
+                
+                if (arg_list.volatileSpecifier())
+                {
+                    definition << " volatile ";
+                }
+                
+                if (arg_list.refQualifier() != RefQualifierNone)
+                {
+                    definition << (arg_list.refQualifier() == RefQualifierLValue ? "&" : "&&");
+                }
+                
+                definition << arg_list.trailingReturnType().data();
+            }
+            
+            if (member->hasOneLineInitializer())
+            {
+                if (member->isDefine())
+                {
+                    definition << "   ";
+                }
+                
+                definition << member->initializer().data();
+            }
+            
+            if (!member->isNoExcept())
+            {
+                definition << member->excpString().data();
+            }
+        }
+        
+        description << (!definition.isEmpty() ? ("\n```c++\n" + definition + "\n```") : "");
+        embed.description = description.toRawUTF8();
+    
+        juce::String module = "All";
+        
+        const Definition *group_def = def;
+        
+        if (dynamic_cast<const MemberDef*>(def))
+        {
+            group_def = def->getOuterScope();
+        }
+        
+        if (group_def)
+        {
+            if (const auto &groups = group_def->partOfGroups(); !groups.empty() && group_def->localName() != "juce")
+            {
+                module.clear();
+                module << groups[0]->groupTitle().rawData() << " ("
+                       << juce::String(groups[0]->localName().data()).upToFirstOccurrenceOf("-", false, true) << ")";
+            }
+        }
+        else
+        {
+            module = "Unknown";
+        }
+        
+        juce::String parent = "**Parent:** None\n";
+        
+        if (const Definition *scope = def->getOuterScope())
+        {
+            parent.clear();
+            parent << "**Parent:** " << scope->qualifiedName().data() << "\n";
+        }
+        
+        embed.fields = {
+            { "Details",
+              (juce::String("**Path:**") + def->qualifiedName().data() + "\n"
+               "**Type:**"               + type->name().data()         + "\n"
+               "**Module:**"             + module                      + "\n"
+               "**Parent:**"             + parent                      + "\n").toRawUTF8()
+            }
+        };
+        
+        if (type == EntityType::Class)
+        {
+            const ClassDef &clazz = static_cast<const ClassDef&>(*def);
+            
+            DotClassGraph cgraph(&clazz, GraphType::Inheritance);
+    
+            TextStream text_stream;
+            cgraph.writeGraph(text_stream, GraphOutputFormat::GOF_BITMAP, EmbeddedOutputFormat::EOF_Html,
+                              dirRoot.getFullPathName().toRawUTF8(), "graph.png", "");
+        }
+        else
+        {
+            sendMessage(message.channelID, "", embed);
+        }
     }
     else if (commandId == Command::Refresh)
     {
     
+    }
+    else
+    {
+        Filter filter;
+    
+        try
+        {
+            filter = Filter::createFromInput(args);
+        }
+        catch (std::invalid_argument &ex)
+        {
+            if (std::string_view(ex.what()).empty())
+            {
+                return false;
+            }
+        
+            sendMessage(message.channelID, ex.what());
+            return true;
+        }
+    
+        PagedEmbed embed(message.channelID, filter);
+        embed.setMaxItemsPerPage(5);
+        
+        juce::String  title;
+        std::uint32_t colour;
+        
+        if (commandId == Command::List)
+        {
+            embed.applyListWithFilter(defCache, "");
+            title  = "Entity List";
+            colour = Colours::List;
+        }
+        else if (commandId == Command::Find)
+        {
+            embed.applyListWithFilter(defCache, query);
+            title  = "Symbols found for: " + query;
+            colour = Colours::Find;
+        }
+        else
+        {
+            return true;
+        }
+    
+        JD_DBG("Generating embed with filters: " + filter.toString().toStdString());
+    
+        sendMessage(message.channelID, "", embed.toEmbed(title, colour), sld::TTS::Default, {
+            [this, embed, sid = message.serverID](sld::ObjectResponse<sld::Message> response) mutable
+            {
+                if (embed.getMaxPages() <= 1)
+                {
+                    return;
+                }
+
+                if (response.error())
+                {
+                    JD_DBG("Error sending message: " + response.text);
+                    return;
+                }
+
+                const sld::Message msg = response;
+
+                (void) applyData<EmbedCacheBuffer>(sid, [this, &embed, &msg](auto &&cacheBuffer)
+                {
+                    JD_DBG("Added embed to cache for message: '" + msg.ID.string() + "'");
+    
+                    embed.setMessageId(msg.ID);
+                    cacheBuffer.push(std::move(embed));
+    
+                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteLastPage.data());
+                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteNextPage.data());
+                });
+            }
+        });
     }
     
     return true;
@@ -566,6 +791,9 @@ void JuceDocClient::initDoxygenEngine()
     Config_updateBool(WARN_IF_DOC_ERROR,      FALSE)
     Config_updateBool(WARN_IF_INCOMPLETE_DOC, FALSE)
     Config_updateBool(WARN_NO_PARAMDOC,       FALSE)
+    
+    Config_updateString(DOT_IMAGE_FORMAT,     "png")
+    Config_updateBool  (HAVE_DOT,             true)
 }
 
 void JuceDocClient::parseDoxygenFiles()
@@ -625,7 +853,8 @@ void JuceDocClient::createFileStructure()
 {
     const juce::File build_folder("./build");
     build_folder.deleteRecursively();
-    juce::File("../../modules").copyDirectoryTo(build_folder);
+    
+    processSourceFiles(juce::File("../../modules"), build_folder);
 }
 
 //======================================================================================================================
