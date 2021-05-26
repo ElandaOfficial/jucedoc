@@ -19,12 +19,11 @@ cache:
 
 before_build:
 - cmd: |-
-    ls
     mkdir build
     cd build
     cmake --version
     cmake -DCMAKE_BUILD_TYPE=%CONFIGURATION% ..
-    ls
 
 build_script:
+- ls
 - make
