@@ -1,8 +1,13 @@
 image: Ubuntu
 
+configuration:
+- Debug
+- Release
+
 clone_script:
-- cmd: git clone --recursive --branch=%APPVEYOR_REPO_BRANCH% https://github.com/ElandaOfficial/jucedoc.git %APPVEYOR_BUILD_FOLDER%
-- cmd: git checkout -f %APPVEYOR_REPO_COMMIT%
+- cmd: |-
+    git clone --recursive --branch=%APPVEYOR_REPO_BRANCH% https://github.com/ElandaOfficial/jucedoc.git %APPVEYOR_BUILD_FOLDER%
+    git checkout -f %APPVEYOR_REPO_COMMIT%
 
 install:
 - sudo apt update -qq && sudo apt install -qq
@@ -12,7 +17,12 @@ install:
 cache:
 - '/usr/lib/x86_64-linux-gnu/'
 
+before_build:
+- cmd: |-
+    mkdir build
+    cd build
+    cmake --version
+    cmake -DCMAKE_BUILD_TYPE=%CONFIGURATION% ..
+
 build_script:
-- mkdir build && cd build
-- cmake -DCMAKE_BUILD_TYPE=$Configuration ..
 - make
