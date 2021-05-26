@@ -39,9 +39,13 @@ inline juce::String getAnchor(const MemberDef &member)
     return "a" + juce::String(sigStr);
 }
 
-inline juce::String sanitiseUrl(std::string_view name)
+inline juce::String sanitiseUrl(std::string_view name, bool keepJuceNamespace = false)
 {
-    name.remove_prefix(6);
+    if (!keepJuceNamespace)
+    {
+        name.remove_prefix(6);
+    }
+    
     return juce::String(name.data()).replace("_", "__").replace("::", "_1_1");
 }
 

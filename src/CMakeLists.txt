@@ -3,4 +3,6 @@ target_sources(JuceDoc
         main.cpp
         jucedocclient.cpp
         pagedembed.cpp
-        processsourcefiles.cpp)
+        processsourcefiles.cpp
+    entitydefinition.cpp
+    commands.cpp)

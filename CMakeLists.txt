@@ -48,6 +48,8 @@ target_link_libraries(JuceDoc
         jaut::jaut_core
         spdlog
         venum
+        cgraph
+        gvc
 
         # Doxygen
         doxymain

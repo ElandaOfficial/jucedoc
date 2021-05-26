@@ -3,8 +3,7 @@
 
 namespace
 {
-    void setOption(const juce::ArgumentList &args, std::string_view name, juce::String &valueToSet,
-                   juce::String defaultValue = "")
+    void setOption(const juce::ArgumentList &args, std::string_view name, juce::String &valueToSet)
     {
         juce::String opt_syntax;
         opt_syntax << "-" << name[0] << "|--" << name.data();
@@ -13,10 +12,6 @@ namespace
         {
             std::swap(valueToSet, opt);
         }
-        else
-        {
-            std::swap(valueToSet, defaultValue);
-        }
     }
     
     void setOption(const juce::ArgumentList &args, std::string_view name, bool &option)
@@ -24,34 +19,48 @@ namespace
         option = args.containsOption(juce::String("--") + name.data());
     }
     
-    void setOption(const juce::ArgumentList &args, std::string_view name, int &option, int defaultValue = 0)
+    void setOption(const juce::ArgumentList &args, std::string_view name, int &option)
     {
         juce::String value;
         setOption(args, name, value);
-        
-        const int int_val = value.getIntValue();
-        option = int_val < 1 ? defaultValue : int_val;
+        option = value.getIntValue();
     }
 }
 
 int main(int argc, char *argv[])
 {
     juce::ArgumentList argument_list(argc, argv);
-    JuceDocClient::Options options;
     
     juce::String client_token;
     juce::String client_id;
     
     // Bot info
-    ::setOption(argument_list, "token", client_token, JUCEDOC_BOT_TOKEN);
-    ::setOption(argument_list, "id",    client_id,    JUCEDOC_BOT_ID);
+    ::setOption(argument_list, "token", client_token);
+    ::setOption(argument_list, "id",    client_id);
+    
+    if (client_token.isEmpty())
+    {
+        client_token = JUCEDOC_BOT_TOKEN;
+    }
+    
+    if (client_id.isEmpty())
+    {
+        client_id = JUCEDOC_BOT_ID;
+    }
+    
+    AppConfig &config = AppConfig::getInstance();
     
     // App info
-    ::setOption(argument_list, "branch", options.branch,        "develop");
-    ::setOption(argument_list, "pcsize", options.pageCacheSize, AppConfig::defaultPageCacheSize);
-    ::setOption(argument_list, "clone",  options.cloneOnStart);
+    ::setOption(argument_list, "branch", config.branchName);
+    ::setOption(argument_list, "pcsize", config.pageCacheSize);
+    ::setOption(argument_list, "clone",  config.cloneOnStart);
     
-    JuceDocClient client(client_token, client_id, options);
+    if (config.pageCacheSize < 1)
+    {
+        config.pageCacheSize = AppInfo::defaultPageCacheSize;
+    }
+    
+    JuceDocClient client(client_token, client_id);
     client.setIntents(sld::Intent::SERVER_MESSAGES | sld::Intent::SERVER_MESSAGE_REACTIONS);
     client.run();
     

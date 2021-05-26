@@ -2,12 +2,11 @@
 #pragma once
 
 #include "config.h"
+#include "commandbase.h"
 #include "specs.h"
 
 #include "pagedembed.h"
 #include "guildstorage.h"
-
-#include <venum.h>
 
 #include <namespacedef.h>
 
@@ -27,94 +26,9 @@
 namespace sld = SleepyDiscord;
 
 //======================================================================================================================
-namespace std
-{
-    template<class T>
-    struct hash<sld::Snowflake<T>>
-    {
-        std::size_t operator()(const sld::Snowflake<T> &slid) const noexcept { return slid.number(); }
-    };
-}
-
-//======================================================================================================================
-VENUM_CREATE_ASSOC
-(
-    ID(Command),
-    VALUES
-    (
-        (List)("Lists all symbols of a certain category.", "notepad_spiral", "list | [filter]"),
-        (Find)("Searches for a portion of text through the entire juce database.\nAsterisk-wildcards supported.", "mag",
-               "find <query> | [filter]"),
-        (Show)("Tries to find a certain symbol and gives a detailed overview if it was found.", "symbols",
-               "show <query> | [filter]"),
-        
-        (Refresh)("Clone the latest commit and recompile the juce architecture.", "recycle", "refresh [commit]")
-    ),
-    BODY
-    (
-    public:
-        constexpr std::string_view getDescription() const noexcept { return description;    }
-        constexpr std::string_view getEmote()       const noexcept { return emote;          }
-        constexpr std::string_view getUsage()       const noexcept { return usage;          }
-        constexpr std::string_view getRoleString()  const noexcept { return allowedRoleIds; }
-        
-        std::vector<sld::Snowflake<sld::Role>> getRoles() const
-        {
-            juce::StringArray id_list;
-            id_list.addTokens(allowedRoleIds.data(), ",", "\"");
-            
-            std::vector<sld::Snowflake<sld::Role>> result;
-            result.reserve(id_list.size());
-            
-            for (const auto &id : id_list)
-            {
-                if (!id.isEmpty())
-                {
-                    result.emplace_back(id.toStdString());
-                }
-            }
-            
-            return result;
-        }
-    
-    private:
-        std::string_view description;
-        std::string_view emote;
-        std::string_view usage;
-        std::string_view allowedRoleIds;
-        
-        //==============================================================================================================
-        constexpr CommandConstant(std::string_view name, int ordinal, std::string_view description,
-                                  std::string_view emote, std::string_view usage, std::string_view allowedRoleIds = "")
-            : VENUM_BASE(name, ordinal),
-              description(description), emote(emote), usage(usage), allowedRoleIds(allowedRoleIds)
-        {}
-    )
-)
-
-//======================================================================================================================
 class JuceDocClient : public sld::DiscordClient
 {
 public:
-    struct Options
-    {
-        juce::String branch;
-        int pageCacheSize;
-        bool cloneOnStart;
-    };
-    
-    //==================================================================================================================
-    JuceDocClient(const juce::String &token, juce::String clientId, Options options);
-    
-    //==================================================================================================================
-    void onMessage (sld::Message) override;
-    void onReady   (sld::Ready)   override;
-    void onError   (SleepyDiscord::ErrorCode, std::string) override;
-    void onServer  (sld::Server) override;
-    void onReaction(sld::Snowflake<sld::User>, sld::Snowflake<sld::Channel>, sld::Snowflake<sld::Message>,
-                    sld::Emoji) override;
-    
-private:
     class EmbedCacheBuffer
     {
     public:
@@ -143,23 +57,32 @@ private:
     };
     
     //==================================================================================================================
-    using Storage = GuildStorage<EmbedCacheBuffer>;
-    using DefVec  = std::vector<std::reference_wrapper<const Definition>>;
+    using Storage  = GuildStorage<EmbedCacheBuffer>;
+    using DefVec   = std::vector<std::reference_wrapper<const Definition>>;
+    using CacheMap = venum::VenumMap<EntityType, DefVec>;
     
     //==================================================================================================================
-    std::vector<std::unique_ptr<NamespaceDef>> namespaces;
-    venum::VenumMap<EntityType, DefVec>        defCache;
+    JuceDocClient(const juce::String &token, juce::String clientId);
     
-    Options      options;
-    juce::String clientId;
+    //==================================================================================================================
+    void onMessage (sld::Message) override;
+    void onReady   (sld::Ready)   override;
+    void onError   (SleepyDiscord::ErrorCode, std::string) override;
+    void onServer  (sld::Server) override;
+    void onReaction(sld::Snowflake<sld::User>, sld::Snowflake<sld::Channel>, sld::Snowflake<sld::Message>,
+                    sld::Emoji) override;
     
-    std::shared_ptr<spdlog::logger> logger { spdlog::stdout_color_mt(AppConfig::nameLogger.data()) };
+    //==================================================================================================================
+    const CacheMap& getCache() const noexcept { return defCache; }
     
-    juce::File dirRoot { juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory() };
-    juce::File dirJuce;
-    juce::File dirDocs;
+    //==================================================================================================================
+    const juce::File &getDirRoot() const noexcept { return dirRoot; }
+    const juce::File &getDirJuce() const noexcept { return dirJuce; }
+    const juce::File &getDirDocs() const noexcept { return dirDocs; }
+    const juce::File &getDirTemp() const noexcept { return dirTemp; }
     
-    bool busy { false };
+    //==================================================================================================================
+    spdlog::logger& getLogger() noexcept { return *logger; }
     
     //==================================================================================================================
     template<class T, class Fn>
@@ -180,6 +103,22 @@ private:
         return false;
     }
     
+private:
+    std::vector<std::unique_ptr<CommandBase>>  commands;
+    std::vector<std::unique_ptr<NamespaceDef>> namespaces;
+    CacheMap                                   defCache;
+    
+    juce::String clientId;
+    
+    std::shared_ptr<spdlog::logger> logger { spdlog::stdout_color_mt(AppInfo::nameLogger.data()) };
+    
+    juce::File dirRoot { juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory() };
+    juce::File dirTemp { dirRoot.getChildFile("temp") };
+    juce::File dirJuce { dirRoot.getChildFile("juce/" + AppConfig::getInstance().branchName) };
+    juce::File dirDocs { dirJuce.getChildFile("docs/doxygen") };
+    
+    bool busy { false };
+    
     //==================================================================================================================
     juce::String getActivator() const;
     
@@ -187,8 +126,7 @@ private:
     void notifyBusy(const sld::Message&);
     
     //==================================================================================================================
-    void showHelpPage  (sld::Message&, const juce::String&);
-    bool processCommand(int, sld::Message&, juce::StringArray&);
+    void showHelpPage(sld::Message&, const juce::String&);
     
     //==================================================================================================================
     void initDoxygenEngine();
@@ -196,5 +134,5 @@ private:
     void createFileStructure();
     
     //==================================================================================================================
-    void cloneRepository() const;
+    void setupRepository() const;
 };

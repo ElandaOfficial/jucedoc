@@ -4,11 +4,13 @@
 #include "config.h"
 #include "linkresolve.h"
 
+// Doxygen
 #include <namespacedef.h>
 #include <classlist.h>
-#include <sleepy_discord/embed.h>
 #include <groupdef.h>
-
+// Sleepy-Discord
+#include <sleepy_discord/embed.h>
+// STL
 #include <cmath>
 
 namespace
@@ -147,6 +149,11 @@ namespace
         
         return false;
     }
+    
+    bool matches(const juce::String &term, std::string_view data, bool ignoreCase = false)
+    {
+        return term.isEmpty() || juce::String(data.data()).matchesWildcard("*" + term + "*", ignoreCase);
+    }
 }
 
 //**********************************************************************************************************************
@@ -170,7 +177,7 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
             const auto &ns_def = static_cast<const NamespaceDef&>(def.get());
             
             if (ns_def.qualifiedName().startsWith(class_path.data())
-                && (term.isEmpty() || ns_def.localName().contains(term.toRawUTF8())))
+                && ::matches(term, ns_def.localName().data()))
             {
                 (void) resultCache.emplace_back(EntityType::Namespace, ns_def);
             }
@@ -185,9 +192,8 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
         for (const auto &def : cache[EntityType::Class])
         {
             const auto &cs_def = static_cast<const ClassDef&>(def.get());
-            
             if (cs_def.qualifiedName().startsWith(class_path.data())
-                && (term.isEmpty() || cs_def.localName().contains(term.toRawUTF8()))
+                && ::matches(term, cs_def.localName().data())
                 && ::classHasBase(cs_def, bases))
             {
                 if (ctypes.contains(CompoundType::valueOf(cs_def.compoundTypeString().str(), true)))
@@ -208,7 +214,7 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
             const auto &en_def = static_cast<const MemberDef&>(def.get());
             
             if (en_def.qualifiedName().startsWith(class_path.data())
-                && (term.isEmpty() || en_def.localName().contains(term.toRawUTF8())))
+                && ::matches(term, en_def.localName().data()))
             {
                 if (en_def.isEnumStruct() ? ctypes.contains(CompoundType::EnumClass)
                                           : ctypes.contains(CompoundType::Enum))
@@ -227,7 +233,7 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
             
             if ((fn_def.qualifiedName().startsWith(class_path.data()))
                 && ::hasMemberSpecs<true>(fn_def, filter)
-                && (term.isEmpty() || fn_def.localName().contains(term.toRawUTF8())))
+                && ::matches(term, fn_def.localName().data()))
             {
                 (void) resultCache.emplace_back(EntityType::Function, fn_def);
             }
@@ -242,7 +248,7 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
             
             if ((var_def.qualifiedName().startsWith(class_path.data()))
                 && ::hasMemberSpecs<false>(var_def, filter)
-                && (term.isEmpty() || var_def.localName().contains(term.toRawUTF8())))
+                && ::matches(term, var_def.localName().data()))
             {
                 (void) resultCache.emplace_back(EntityType::Field, var_def);
             }
@@ -256,7 +262,7 @@ void PagedEmbed::applyListWithFilter(const CacheMap &cache, const juce::String &
             const auto &aka_def = static_cast<const MemberDef&>(def.get());
             
             if (aka_def.qualifiedName().startsWith(class_path.data())
-                && (term.isEmpty() || aka_def.localName().contains(term.toRawUTF8())))
+                && ::matches(term, aka_def.localName().data()))
             {
                 (void) resultCache.emplace_back(EntityType::TypeAlias, aka_def);
             }
@@ -409,18 +415,23 @@ sld::Embed PagedEmbed::toEmbed(const juce::String &title, std::uint32_t colour) 
             description = "No docs available";
         }
         
+        const AppConfig    &config = AppConfig::getInstance();
+        const juce::String doc_url = AppInfo::urlJuceDocsBase.data() + config.branchName + "/";
         field_desc << "**Doc:** " << description << "\n"
-                   << "[Go to official docs](" << AppConfig::urlJuceDocsBase.data()
-                                               << ::getUrlFromEntity(def.first, def.second) << ")";
-        
+                   << "[Go to official docs](" << doc_url << ::getUrlFromEntity(def.first, def.second) << ")";
         field_desc = field_desc.substring(0, std::min(1024, field_desc.length()));
-        
+    
+        embed.footer.iconUrl = AppIcon::LogoGitHub.getUrl();
+        embed.timestamp      = config.currentCommit.date.toStdString();
+        embed.footer.text    = config.currentCommit.name.substring(0, 9).toStdString()
+                               + " (" + config.branchName.toStdString() + ")";
+    
+    
         embed.fields.emplace_back(def.second.get().localName().data(), field_desc.toRawUTF8(), false);
     }
     
     return embed;
 }
-
 //======================================================================================================================
 // endregion PagedEmbed
 //**********************************************************************************************************************

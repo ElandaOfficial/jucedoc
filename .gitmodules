@@ -18,6 +18,3 @@
 	path = lib/juce
 	url = https://github.com/juce-framework/juce
 	branch = develop
-[submodule "lib/graphviz"]
-	path = lib/graphviz
-	url = https://gitlab.com/graphviz/graphviz.git

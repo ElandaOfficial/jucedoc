@@ -1,25 +1,28 @@
 
 #include "jucedocclient.h"
 
+#include "commands.h"
+#include "entitydefinition.h"
 #include "filter.h"
 #include "linkresolve.h"
 #include "processsourcefiles.h"
 
-#include <dir.h>
-#include <doxygen.h>
-#include <outputgen.h>
-#include <parserintf.h>
+// Doxygen
 #include <classdef.h>
-#include <filedef.h>
-#include <util.h>
 #include <classlist.h>
 #include <config.h>
+#include <dir.h>
+#include <doxygen.h>
+#include <filedef.h>
 #include <filename.h>
-#include <membername.h>
 #include <groupdef.h>
-#include <dotclassgraph.h>
-
+#include <membername.h>
+#include <outputgen.h>
+#include <parserintf.h>
+#include <util.h>
+// STL
 #include <filesystem>
+#include <regex>
 
 #if JUCE_DEBUG
 #   define JD_DBG(MSG) logger->debug(MSG)
@@ -71,10 +74,7 @@ private:
 //======================================================================================================================
 namespace
 {
-    using DefVec = std::vector<std::reference_wrapper<const Definition>>;
-    
-    //==================================================================================================================
-    void copyList(const MemberList *src, DefVec &dest)
+    void copyList(const MemberList *src, JuceDocClient::DefVec &dest)
     {
         if (!src)
         {
@@ -83,20 +83,17 @@ namespace
         
         for (const auto &member : *src)
         {
-            if (member)
-            {
-                (void) dest.emplace_back(*member);
-            }
+            (void) dest.emplace_back(*member);
         }
     }
     
-    void traceAndDumpClassHierarchyDfs(venum::VenumMap<EntityType, DefVec> &defCache, const ClassDef &classDef)
+    void traceAndDumpClassHierarchyDfs(JuceDocClient::CacheMap &defCache, const ClassDef &classDef)
     {
-        DefVec &list_class     = defCache[EntityType::Class];
-        DefVec &list_enum      = defCache[EntityType::Enum];
-        DefVec &list_func      = defCache[EntityType::Function];
-        DefVec &list_var       = defCache[EntityType::Field];
-        DefVec &list_alias     = defCache[EntityType::TypeAlias];
+        JuceDocClient::DefVec &list_class     = defCache[EntityType::Class];
+        JuceDocClient::DefVec &list_enum      = defCache[EntityType::Enum];
+        JuceDocClient::DefVec &list_func      = defCache[EntityType::Function];
+        JuceDocClient::DefVec &list_var       = defCache[EntityType::Field];
+        JuceDocClient::DefVec &list_alias     = defCache[EntityType::TypeAlias];
         
         if (!classDef.isAnonymous())
         {
@@ -106,10 +103,7 @@ namespace
             {
                 for (const auto &en_def : *list)
                 {
-                    if (en_def)
-                    {
-                        (void) list_enum.emplace_back(*en_def);
-                    }
+                    (void) list_enum.emplace_back(*en_def);
                 }
             }
     
@@ -122,24 +116,6 @@ namespace
                 traceAndDumpClassHierarchyDfs(defCache, *def);
             }
         }
-    }
-    
-    //==================================================================================================================
-    template<class ...TVecs>
-    std::tuple<const DefVec*, const Definition*> findDefinition(const juce::String &term, const TVecs &...vecs)
-    {
-        for (const auto &vec : { &vecs... })
-        {
-            for (const auto &def : *vec)
-            {
-                if (def.get().qualifiedName() == term.toRawUTF8())
-                {
-                    return std::make_tuple(vec, &def.get());
-                }
-            }
-        }
-        
-        return std::make_tuple(static_cast<const DefVec*>(nullptr), static_cast<const Definition*>(nullptr));
     }
 }
 
@@ -209,10 +185,9 @@ std::size_t JuceDocClient::EmbedCacheBuffer::size() const noexcept
 //**********************************************************************************************************************
 // region JuceDocClient
 //======================================================================================================================
-JuceDocClient::JuceDocClient(const juce::String &parToken, juce::String parClientId, Options options)
+JuceDocClient::JuceDocClient(const juce::String &parToken, juce::String parClientId)
     : sld::DiscordClient(parToken.toStdString()),
-      options(std::move(options)), clientId(std::move(parClientId)),
-      dirJuce(dirRoot.getChildFile(this->options.branch)), dirDocs(dirJuce.getChildFile("docs/doxygen"))
+      clientId(std::move(parClientId))
 {
     dirRoot.setAsCurrentWorkingDirectory();
 
@@ -236,8 +211,8 @@ void JuceDocClient::onMessage(SleepyDiscord::Message message)
             return;
         }
         
-        juce::StringArray args;
-        args.addTokens(content.fromFirstOccurrenceOf(getActivator(), false, false).trim(), " ", "\"");
+        const juce::String args_string = content.fromFirstOccurrenceOf(getActivator(), false, false).trim();
+        juce::StringArray  args        = juce::StringArray::fromTokens(args_string, true);
         
         if (args.isEmpty())
         {
@@ -255,50 +230,24 @@ void JuceDocClient::onMessage(SleepyDiscord::Message message)
             }
             else
             {
-                const Command command = Command::valueOf(cmd.toLowerCase().toRawUTF8(), true);
+                const auto command = std::find_if(commands.begin(), commands.end(), [&cmd](auto &&cmdPtr)
+                {
+                    return cmd.equalsIgnoreCase(cmdPtr->getName().data());
+                });
                 
-                if (!command)
+                if (command == commands.end())
                 {
                     sendMessage(message.channelID, "I am so sorry, I don't know what **" + cmd.toStdString()
                                                    + "** means. :frowning:");
                     return;
                 }
                 
-                const std::vector<sld::Snowflake<sld::Role>> allowed_roles = command->getRoles();
-                
-                if (!allowed_roles.empty())
+                args.remove(0);
+
+                if (!(*command)->execute(message, args))
                 {
-                    const sld::ServerMember member = getMember(message.serverID, message.author).cast();
-                    const std::vector<sld::Snowflake<sld::Role>> &roles = member.roles;
-                    
-                    for (const auto &role : allowed_roles)
-                    {
-                        if (std::find(roles.begin(), roles.end(), role) != roles.end())
-                        {
-                            args.remove(0);
-                            
-                            if (!processCommand(command->ordinal(), message, args))
-                            {
-                                sendMessage(message.channelID, "Wrong usage for **" + cmd.toStdString() + "**!\n"
-                                                               "**Usage:** " + command->getUsage().data());
-                            }
-                            
-                            return;
-                        }
-                    }
-                    
-                    sendMessage(message.channelID, "I see what you did there. :smirk:\n"
-                                                   "Unfortunately you don't have the permission to use this command.");
-                }
-                else
-                {
-                    args.remove(0);
-    
-                    if (!processCommand(command->ordinal(), message, args))
-                    {
-                        sendMessage(message.channelID, "Wrong usage for **" + cmd.toStdString() + "**!\n"
-                                                       "**Usage:** " + command->getUsage().data());
-                    }
+                    sendMessage(message.channelID, "Wrong usage for **" + cmd.toStdString() + "**!\n"
+                                                   "**Usage:** " + (*command)->getUsage().data());
                 }
             }
         }
@@ -310,14 +259,11 @@ void JuceDocClient::onReady(sld::Ready readyData)
     anon juce::ScopedValueSetter(busy, true);
     logger->info("Initialising JuceDoc...");
     
-    if (options.cloneOnStart || !dirJuce.exists())
-    {
-        cloneRepository();
-    }
+    setupRepository();
     
     for (const auto &guild : getServers().vector())
     {
-        (void) Storage::createFor(guild.ID, EmbedCacheBuffer(options.pageCacheSize));
+        (void) Storage::createFor(guild.ID, EmbedCacheBuffer(AppConfig::getInstance().pageCacheSize));
         JD_DBG("Registered server for id: " + guild.ID.string());
     }
     
@@ -337,14 +283,24 @@ void JuceDocClient::onReady(sld::Ready readyData)
         parseDoxygenFiles();
     }
     
+    logger->info("Preparing command provider...");
+    commands.emplace_back(std::make_unique<CommandList>   (*this));
+    commands.emplace_back(std::make_unique<CommandFind>   (*this));
+    commands.emplace_back(std::make_unique<CommandShow>   (*this));
+    commands.emplace_back(std::make_unique<CommandAbout>  (*this));
+    commands.emplace_back(std::make_unique<CommandFilters>(*this));
+    
     logger->info("JuceDoc is now ready to be used.");
 }
 
-void JuceDocClient::onError(sld::ErrorCode, const std::string errorMessage) { logger->error(errorMessage); }
+void JuceDocClient::onError(sld::ErrorCode, const std::string errorMessage)
+{
+    logger->error(errorMessage);
+}
 
 void JuceDocClient::onServer(sld::Server server)
 {
-    (void) Storage::createFor(server.ID, EmbedCacheBuffer(options.pageCacheSize));
+    (void) Storage::createFor(server.ID, EmbedCacheBuffer(AppConfig::getInstance().pageCacheSize));
     JD_DBG("Registered new server for id: " + server.ID.string());
 }
 
@@ -393,12 +349,12 @@ void JuceDocClient::showHelpPage(sld::Message &message, const juce::String &cmd)
         embed.description = "A list of commands you can use:";
         embed.color       = Colours::Help;
         
-        embed.fields.reserve(Command::values.size());
+        embed.fields.reserve(commands.size());
         
-        for (const auto &command : Command::values)
+        for (const auto &command : commands)
         {
-            const juce::String emote = command->getEmote().data();
-            const juce::String title = (!emote.isEmpty() ? ":" + emote + ": " : "") + command->name().data();
+            const juce::String emote = command->getEmoteName().data();
+            const juce::String title = (!emote.isEmpty() ? ":" + emote + ": " : "") + command->getName().data();
             embed.fields.emplace_back(title.toStdString(), command->getDescription().data(), false);
         }
         
@@ -406,37 +362,22 @@ void JuceDocClient::showHelpPage(sld::Message &message, const juce::String &cmd)
     }
     else
     {
-        for (const auto &command : Command::values)
+        for (const auto &command : commands)
         {
-            const juce::String name = command->name().data();
+            const juce::String name = command->getName().data();
             
             if (name.equalsIgnoreCase(cmd))
             {
-                juce::String roles = "everyone";
-                
-                if (!command->getRoleString().empty())
-                {
-                    const std::vector<sld::Snowflake<sld::Role>> role_ids = command->getRoles();
-                    
-                    sld::Server server = getServer(message.serverID).cast();
-                    roles = server.findRole(role_ids[0])->name;
-                    
-                    for (int i = 1; i < role_ids.size(); ++i)
-                    {
-                        roles << ", " << server.findRole(role_ids[i])->name;
-                    }
-                }
-    
-                const juce::String emote       = command->getEmote().data();
-                const juce::String emote_title = (!emote.isEmpty() ? ":" + emote + ": " : "") + command->name().data();
+                const juce::String emote       = command->getEmoteName().data();
+                const juce::String emote_title = (!emote.isEmpty() ? ":" + emote + ": " : "")
+                                                  + command->getName().data();
     
                 sld::Embed embed;
                 embed.title       = emote_title.toStdString() + "Help for '" + name.toStdString() + "'";
                 embed.description = command->getDescription();
                 embed.color       = Colours::Help;
                 embed.fields      = {
-                    { "Usage",        command->getUsage().data(), false },
-                    { "Needed roles", roles.toStdString(),        false }
+                    { "Usage", command->getUsage().data(), false }
                 };
                 
                 sendMessage(message.channelID, "", embed);
@@ -444,333 +385,6 @@ void JuceDocClient::showHelpPage(sld::Message &message, const juce::String &cmd)
             }
         }
     }
-}
-
-bool JuceDocClient::processCommand(int commandId, sld::Message &message, juce::StringArray &args)
-{
-    juce::String query;
-    
-    if (commandId != Command::List.ordinal())
-    {
-        if (args.isEmpty())
-        {
-            return false;
-        }
-        
-        std::swap(query, args.getReference(0));
-        args.remove(0);
-    }
-    
-    if (commandId == Command::Show)
-    {
-        const DefVec &list_namespace = defCache[EntityType::Namespace];
-        const DefVec &list_class     = defCache[EntityType::Class];
-        const DefVec &list_enum      = defCache[EntityType::Enum];
-        const DefVec &list_func      = defCache[EntityType::Function];
-        const DefVec &list_var       = defCache[EntityType::Field];
-        const DefVec &list_alias     = defCache[EntityType::TypeAlias];
-        
-        const juce::String last_name = query.fromLastOccurrenceOf("::", false, true);
-        const Definition   *def      = nullptr;
-        EntityType         type;
-        
-        if (last_name.isEmpty())
-        {
-            const std::tuple<const DefVec*, const Definition*> found
-                = ::findDefinition(query, list_namespace, list_class, list_enum, list_func, list_var, list_alias);
-            
-            if (const auto *const vec = std::get<0>(found))
-            {
-                type = std::find_if(defCache.begin(), defCache.end(), [vec](auto &&entry)
-                {
-                    return vec == &entry.second;
-                })->first;
-                def = std::get<1>(found);
-            }
-        }
-        else
-        {
-            // Likely a function, variable or namespace
-            if (juce::CharacterFunctions::isLowerCase(last_name[0]))
-            {
-                const std::tuple<const DefVec*, const Definition*> found
-                    = ::findDefinition(query, list_func, list_namespace, list_var, list_class, list_enum, list_alias);
-                
-                if (const auto *const vec = std::get<0>(found))
-                {
-                    type = std::find_if(defCache.begin(), defCache.end(), [vec](auto &&entry)
-                    {
-                        return vec == &entry.second;
-                    })->first;
-                    def = std::get<1>(found);
-                }
-            }
-            else
-            {
-                const std::tuple<const DefVec*, const Definition*> found
-                    = ::findDefinition(query, list_class, list_enum, list_alias, list_func, list_namespace, list_var);
-                
-                if (const auto *const vec = std::get<0>(found))
-                {
-                    type = std::find_if(defCache.begin(), defCache.end(), [vec](auto &&entry)
-                    {
-                        return vec == &entry.second;
-                    })->first;
-                    def = std::get<1>(found);
-                }
-            }
-        }
-        
-        if (!def)
-        {
-            sendMessage(message.channelID, "Sorry, I could not find any entity for: " + query.toStdString() + ". :/");
-            return true;
-        }
-        
-        sld::Embed embed;
-        embed.title = def->name().data();
-        embed.url   = (AppConfig::urlJuceDocsBase.data() + options.branch + "/"
-                       + getUrlFromEntity(type, *def)).toRawUTF8();
-        embed.color = Colours::Show;
-        
-        juce::String description;
-        description << (def->documentation().isEmpty()
-                           ? (def->briefDescription().isEmpty() ? "No description": def->briefDescription())
-                           : def->documentation()).data();
-        
-        juce::String definition;
-        
-        if (const MemberDef *member = dynamic_cast<const MemberDef*>(def))
-        {
-            definition << member->definition().data();
-            
-            if (member->argumentList().hasParameters())
-            {
-                definition << "(";
-                
-                const ArgumentList &arg_list = member->argumentList();
-                
-                for (auto it = arg_list.begin(); it != arg_list.end(); ++it)
-                {
-                    const int index = std::distance(arg_list.begin(), it);
-                    
-                    if (member->isDefine())
-                    {
-                        definition << it->type.data();
-                        
-                        if (index < (arg_list.size() - 1))
-                        {
-                            definition << ",";
-                        }
-                    }
-                    else
-                    {
-                        definition << it->attrib.data();
-                        
-                        if (it->type != "...")
-                        {
-                            definition << juce::String(it->type.data()).replace(" *", "*").replace(" &", "&");
-                        }
-                        
-                        if (!it->name.isEmpty() || it->type == "...")
-                        {
-                            if (it->name.isEmpty())
-                            {
-                                definition << it->type.data();
-                            }
-                            else
-                            {
-                                definition << " " << it->name.data();
-                            }
-                        }
-                        
-                        definition << it->array.data();
-                        
-                        if (!it->defval.isEmpty())
-                        {
-                            definition << " = " << it->defval.data();
-                        }
-    
-                        if (index < (arg_list.size() - 1))
-                        {
-                            definition << ",";
-                        }
-                    }
-                }
-                
-                definition << ")" << member->extraTypeChars().data();
-                
-                if (arg_list.constSpecifier())
-                {
-                    definition << " const ";
-                }
-                
-                if (arg_list.volatileSpecifier())
-                {
-                    definition << " volatile ";
-                }
-                
-                if (arg_list.refQualifier() != RefQualifierNone)
-                {
-                    definition << (arg_list.refQualifier() == RefQualifierLValue ? "&" : "&&");
-                }
-                
-                definition << arg_list.trailingReturnType().data();
-            }
-            
-            if (member->hasOneLineInitializer())
-            {
-                if (member->isDefine())
-                {
-                    definition << "   ";
-                }
-                
-                definition << member->initializer().data();
-            }
-            
-            if (!member->isNoExcept())
-            {
-                definition << member->excpString().data();
-            }
-        }
-        
-        description << (!definition.isEmpty() ? ("\n```c++\n" + definition + "\n```") : "");
-        embed.description = description.toRawUTF8();
-    
-        juce::String module = "All";
-        
-        const Definition *group_def = def;
-        
-        if (dynamic_cast<const MemberDef*>(def))
-        {
-            group_def = def->getOuterScope();
-        }
-        
-        if (group_def)
-        {
-            if (const auto &groups = group_def->partOfGroups(); !groups.empty() && group_def->localName() != "juce")
-            {
-                module.clear();
-                module << groups[0]->groupTitle().rawData() << " ("
-                       << juce::String(groups[0]->localName().data()).upToFirstOccurrenceOf("-", false, true) << ")";
-            }
-        }
-        else
-        {
-            module = "Unknown";
-        }
-        
-        juce::String parent = "**Parent:** None\n";
-        
-        if (const Definition *scope = def->getOuterScope())
-        {
-            parent.clear();
-            parent << "**Parent:** " << scope->qualifiedName().data() << "\n";
-        }
-        
-        embed.fields = {
-            { "Details",
-              (juce::String("**Path:**") + def->qualifiedName().data() + "\n"
-               "**Type:**"               + type->name().data()         + "\n"
-               "**Module:**"             + module                      + "\n"
-               "**Parent:**"             + parent                      + "\n").toRawUTF8()
-            }
-        };
-        
-        if (type == EntityType::Class)
-        {
-            const ClassDef &clazz = static_cast<const ClassDef&>(*def);
-            
-            DotClassGraph cgraph(&clazz, GraphType::Inheritance);
-    
-            TextStream text_stream;
-            cgraph.writeGraph(text_stream, GraphOutputFormat::GOF_BITMAP, EmbeddedOutputFormat::EOF_Html,
-                              dirRoot.getFullPathName().toRawUTF8(), "graph.png", "");
-        }
-        else
-        {
-            sendMessage(message.channelID, "", embed);
-        }
-    }
-    else if (commandId == Command::Refresh)
-    {
-    
-    }
-    else
-    {
-        Filter filter;
-    
-        try
-        {
-            filter = Filter::createFromInput(args);
-        }
-        catch (std::invalid_argument &ex)
-        {
-            if (std::string_view(ex.what()).empty())
-            {
-                return false;
-            }
-        
-            sendMessage(message.channelID, ex.what());
-            return true;
-        }
-    
-        PagedEmbed embed(message.channelID, filter);
-        embed.setMaxItemsPerPage(5);
-        
-        juce::String  title;
-        std::uint32_t colour;
-        
-        if (commandId == Command::List)
-        {
-            embed.applyListWithFilter(defCache, "");
-            title  = "Entity List";
-            colour = Colours::List;
-        }
-        else if (commandId == Command::Find)
-        {
-            embed.applyListWithFilter(defCache, query);
-            title  = "Symbols found for: " + query;
-            colour = Colours::Find;
-        }
-        else
-        {
-            return true;
-        }
-    
-        JD_DBG("Generating embed with filters: " + filter.toString().toStdString());
-    
-        sendMessage(message.channelID, "", embed.toEmbed(title, colour), sld::TTS::Default, {
-            [this, embed, sid = message.serverID](sld::ObjectResponse<sld::Message> response) mutable
-            {
-                if (embed.getMaxPages() <= 1)
-                {
-                    return;
-                }
-
-                if (response.error())
-                {
-                    JD_DBG("Error sending message: " + response.text);
-                    return;
-                }
-
-                const sld::Message msg = response;
-
-                (void) applyData<EmbedCacheBuffer>(sid, [this, &embed, &msg](auto &&cacheBuffer)
-                {
-                    JD_DBG("Added embed to cache for message: '" + msg.ID.string() + "'");
-    
-                    embed.setMessageId(msg.ID);
-                    cacheBuffer.push(std::move(embed));
-    
-                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteLastPage.data());
-                    addReaction(msg.channelID, msg.ID, PagedEmbed::emoteNextPage.data());
-                });
-            }
-        });
-    }
-    
-    return true;
 }
 
 //======================================================================================================================
@@ -824,10 +438,7 @@ void JuceDocClient::parseDoxygenFiles()
         {
             for (const auto &en_def : *list)
             {
-                if (en_def)
-                {
-                    (void) list_enum.emplace_back(*en_def);
-                }
+                (void) list_enum.emplace_back(*en_def);
             }
         }
     
@@ -851,6 +462,8 @@ void JuceDocClient::parseDoxygenFiles()
 
 void JuceDocClient::createFileStructure()
 {
+    (void) dirTemp.createDirectory();
+    
     const juce::File build_folder("./build");
     build_folder.deleteRecursively();
     
@@ -858,16 +471,52 @@ void JuceDocClient::createFileStructure()
 }
 
 //======================================================================================================================
-void JuceDocClient::cloneRepository() const
+void JuceDocClient::setupRepository() const
 {
-    const juce::String &branch = options.branch;
+    const juce::String &branch = AppConfig::getInstance().branchName;
+    juce::ChildProcess gitProcess;
     
-    dirJuce.deleteRecursively();
-    logger->info("Cloning latest juce " + branch.toStdString() + " commit...");
+    AppConfig &config = AppConfig::getInstance();
     
-    juce::ChildProcess cloneProcess;
-    cloneProcess.start("git clone --branch " + branch + " https://github.com/juce-framework/juce.git " + branch);
-    cloneProcess.waitForProcessToFinish(-1);
+    if (config.cloneOnStart || !dirJuce.exists())
+    {
+        (void) dirJuce.deleteRecursively();
+        logger->info("Cloning latest juce " + branch.toStdString() + " commit...");
+        
+        (void) gitProcess.start("git clone --branch " + branch + AppInfo::urlJuceGitRepo.data() + " juce/" + branch);
+        (void) gitProcess.waitForProcessToFinish(-1);
+    }
+    
+    const juce::String env = "env -C juce/" + branch + " ";
+    bool  need_request     = config.currentCommit.name.isEmpty();
+    
+    if (!need_request)
+    {
+        (void) gitProcess.start(env + "git checkout " + config.currentCommit.name);
+        
+        if (!(need_request = gitProcess.readAllProcessOutput().startsWith("error")))
+        {
+            (void) gitProcess.start(env + "git log -1 --pretty=format:'%ct'");
+            const juce::Time time(gitProcess.readAllProcessOutput().removeCharacters("'").getLargeIntValue() * 1000);
+            config.currentCommit.date = time.formatted("%Y-%m-%d");
+        }
+    }
+    
+    if (need_request)
+    {
+        (void) gitProcess.start(env + "git log -1 --pretty=format:" R"('{"name":"%H","date":"%ct"}')");
+        const juce::var json = juce::JSON::fromString(gitProcess.readAllProcessOutput().removeCharacters("'"));
+        
+        if (json.isObject())
+        {
+            if (const juce::DynamicObject *const root = json.getDynamicObject())
+            {
+                const juce::Time time(root->getProperty("date").toString().getLargeIntValue() * 1000);
+                config.currentCommit.name = root->getProperty("name").toString();
+                config.currentCommit.date = time.formatted("%Y-%m-%d");
+            }
+        }
+    }
 }
 //======================================================================================================================
 // endregion JuceDocClient

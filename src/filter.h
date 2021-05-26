@@ -49,6 +49,7 @@ private:
         using type = typename FilterDuplicates<jaut::TypeArray<>, Ts...>::type::template to<Wrapper>;
     };
     
+public:
     struct TypeMap : jaut::TypeArray <
                          venum::VenumSet<EntityType>,
                          venum::VenumSet<Ownership>,
@@ -69,11 +70,57 @@ private:
         static_assert(forAll<jaut::AllDefaultConstructible>(), "All types must be default constructible");
         
         //==============================================================================================================
-        static constexpr std::array<std::string_view, TypeMap::size> names {
-            "entity",
-            "mtype",
-            "vtype",
-            "ctype",
+        struct OptionDetail
+        {
+            std::string_view name;
+            std::string_view description;
+            std::vector<std::pair<std::string_view, std::string_view>> options;
+        };
+        
+        //==============================================================================================================
+        static constexpr std::array<OptionDetail, TypeMap::size> data {
+            {
+                "entity",
+                "The type of entity to display.",
+                {
+                    { "namespace", "Show namespaces"   },
+                    { "class",     "Show classes"      },
+                    { "enum",      "Show enums"        },
+                    { "function",  "Show function"     },
+                    { "field",     "Show variables"    },
+                    { "typealias", "Show type aliases" }
+                }
+            },
+            {
+                "mtype",
+                "The type of membership of the entities to find.",
+                {
+                    { "free",   "Show free functions" },
+                    { "member", "Show a class' member functions" },
+                    { "static", "Show a class' static functions" },
+                    { "friend", "Show a class' friend functions" }
+                }
+            },
+            {
+                "vtype",
+                "The value category of a variable or function.",
+                {
+                    { "& or lvalue",  "Show lvalue entities"   },
+                    { "&& or rvalue", "Show rvalue entities"   },
+                    { "value",        "Show by-value entities" }
+                }
+            },
+            {
+                "ctype",
+                "The compound type of classes that should be filtered out.",
+                {
+                    { "class",     "Show classes"      },
+                    { "struct",    "Show structs"      },
+                    { "union",     "Show unions"       },
+                    { "enum",      "Show enums"        },
+                    { "enumclass", "Show scoped enums" }
+                }
+            }
             "linkage",
             "quals",
             "virtual",
@@ -83,6 +130,10 @@ private:
             "constexpr",
             
             "sort"
+        };
+        
+        static constexpr std::array<std::string_view, TypeMap::size> descs {
+            "The type of entity"
         };
         
         template<std::size_t I>
@@ -103,7 +154,8 @@ private:
             }
         }
     };
-    
+
+private:
     struct Option
     {
         std::string_view name;
