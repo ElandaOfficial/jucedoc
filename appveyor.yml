@@ -12,7 +12,6 @@ install:
 - sudo apt update -qq && sudo apt install -qq
 - sudo apt -y install build-essential git cmake
 - sudo apt -y install libgraphviz-dev
-- ls
 
 cache:
 - '/usr/lib/x86_64-linux-gnu/'
@@ -23,7 +22,7 @@ before_build:
     mkdir build
     cd build
     cmake --version
-    cmake -DCMAKE_BUILD_TYPE=%CONFIGURATION% ..
+    cmake -DCMAKE_BUILD_TYPE=%CONFIGURATION% ...
 
 build_script:
 - make
