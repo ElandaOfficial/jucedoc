@@ -306,7 +306,10 @@ bool CommandFilters::execute(const SleepyDiscord::Message &msg, const juce::Stri
     embed.title = "Filters";
     embed.color = Colours::About;
     
-    embed.description = "Here is a list of all filters that you can apply to a query.";
+    embed.description = "Here is a list of all filters that you can apply to a query.\n"
+                        "By default, each of these filters that has only a range of possible options is set to "
+                        "contain all of the possible flags as long as no custom options are specified!\n\n"
+                        "All filters can be applied in the form of (with no spaces): filter:options,";
     
     embed.author.iconUrl = AppIcon::LogoJuce.getUrl().data();
     embed.author.name    = "JuceDoc";
@@ -317,15 +320,54 @@ bool CommandFilters::execute(const SleepyDiscord::Message &msg, const juce::Stri
     embed.footer.text       = config.currentCommit.name.substring(0, 9).toStdString()
                               + " (" + config.branchName.toStdString() + ")";
     
-    juce::var filters = juce::JSON::fromString(Filter().toString());
-    
-    if (juce::DynamicObject *root = filters.getDynamicObject())
-    {
-        for (const auto &[name, value] : root->getProperties())
+    Filter::TypeMap::iterate(
+        [&embed](auto &&v)
         {
-            embed.fields.emplace_back(name.toString().toRawUTF8(), value.toString().toRawUTF8());
+            using IdxType = std::decay_t<decltype(v)>;
+            using T       = Filter::TypeMap::at<IdxType::value>;
+            
+            juce::String desc;
+            desc << Filter::TypeMap::data[IdxType::value].description.data();
+            
+            if constexpr (jaut::sameTypeIgnoreTemplate_v<venum::VenumSet, T>)
+            {
+                using VT = jaut::getTypeAt_t<T, 0>;
+                
+                desc << "\nValues: ";
+                
+                for (const auto &con : VT::values)
+                {
+                    desc << con->name().data();
+                    
+                    if (con.get() != VT::values[VT::values.size() - 1])
+                    {
+                        desc << ", ";
+                    }
+                }
+            }
+            else if constexpr (std::is_same_v<T, SortType>)
+            {
+                desc << ::toCodeBlock("yaml",
+                                      "entity: Sort by entity-type\n"
+                                      "asc: Sort alphabetically by qualified name (ascending)\n"
+                                      "desc: Sort alphabetically by qualified name (descending)");
+            }
+            else if constexpr (venum::is_venum_type_v<T>)
+            {
+                for (const auto &con : T::values)
+                {
+                    desc << con.name().data();
+        
+                    if (con != T::values[T::values.size() - 1])
+                    {
+                        desc << ", ";
+                    }
+                }
+            }
+    
+            embed.fields.emplace_back(Filter::TypeMap::data[IdxType::value].name.data(), desc.toRawUTF8());
         }
-    }
+    );
     
     client.sendMessage(msg.channelID, "", embed);
     return true;

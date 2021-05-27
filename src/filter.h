@@ -74,70 +74,34 @@ public:
         {
             std::string_view name;
             std::string_view description;
-            std::vector<std::pair<std::string_view, std::string_view>> options;
         };
         
         //==============================================================================================================
-        static constexpr std::array<OptionDetail, TypeMap::size> data {
+        inline static constexpr std::array<OptionDetail, TypeMap::size> data {{
+            { "entity",  "The type of entity to display."                            },
+            { "mtype",   "The type of membership of the entities to find."           },
+            { "vtype",   "The value category of a variable or function."             },
+            { "ctype",   "The compound type of classes that should be filtered out." },
+            { "linkage", "The type of linkage of the symbols to show."               },
+            { "quals",   "The type qualifications of the variable or function."      },
+            { "virtual", "Whether a function is virtual or not, or pure virtual."    },
             {
-                "entity",
-                "The type of entity to display.",
-                {
-                    { "namespace", "Show namespaces"   },
-                    { "class",     "Show classes"      },
-                    { "enum",      "Show enums"        },
-                    { "function",  "Show function"     },
-                    { "field",     "Show variables"    },
-                    { "typealias", "Show type aliases" }
-                }
+                "bases",
+                "A list of comma seperated class paths (full qualified) that must be bases of the searched classes.\n"
+                "Any entry prefixed with an @ symbol will only search for bases on the top of the class, all others "
+                "will do a deep search through the class' entire inheritance hierarchy."
             },
             {
-                "mtype",
-                "The type of membership of the entities to find.",
-                {
-                    { "free",   "Show free functions" },
-                    { "member", "Show a class' member functions" },
-                    { "static", "Show a class' static functions" },
-                    { "friend", "Show a class' friend functions" }
-                }
+                "cpath",
+                "The class path each searched entity must begin with.\n"
+                "For example: `list cpath:juce::Audio`, search all entities that start with \"juce::Audio\"."
             },
-            {
-                "vtype",
-                "The value category of a variable or function.",
-                {
-                    { "& or lvalue",  "Show lvalue entities"   },
-                    { "&& or rvalue", "Show rvalue entities"   },
-                    { "value",        "Show by-value entities" }
-                }
-            },
-            {
-                "ctype",
-                "The compound type of classes that should be filtered out.",
-                {
-                    { "class",     "Show classes"      },
-                    { "struct",    "Show structs"      },
-                    { "union",     "Show unions"       },
-                    { "enum",      "Show enums"        },
-                    { "enumclass", "Show scoped enums" }
-                }
-            }
-            "linkage",
-            "quals",
-            "virtual",
-            
-            "bases",
-            "cpath",
-            "constexpr",
-            
-            "sort"
-        };
-        
-        static constexpr std::array<std::string_view, TypeMap::size> descs {
-            "The type of entity"
-        };
+            { "constexpr", "Search for entities that are constexpr only. (true/false)" },
+            { "sort",      "Sort the entities after specific criteria."                }
+        }};
         
         template<std::size_t I>
-        static constexpr auto create() { return Option{ names[I], getDefault<I>() }; }
+        static constexpr auto create() { return Option{ data[I].name, getDefault<I>() }; }
     
         template<std::size_t I>
         static constexpr at<I> getDefault()
@@ -403,6 +367,5 @@ public:
     
     //==================================================================================================================
     // Dev asserts
-    static_assert(TypeMap::size == END,                               "Missing an index for a newly added option");
-    static_assert(!TypeMap::names[TypeMap::names.size() - 1].empty(), "Didn't add names for each option");
+    static_assert(TypeMap::size == END, "Missing an index for a newly added option");
 };

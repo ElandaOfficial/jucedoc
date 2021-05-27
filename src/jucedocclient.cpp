@@ -272,7 +272,7 @@ void JuceDocClient::onReady(sld::Ready readyData)
         // Since Doxygen uses the filesystem working directory, which is where our binary sits,
         // we need to set this to our juce docs directory
         anon ScopedWorkingDirectory(dirDocs, ScopedWorkingDirectory::System | ScopedWorkingDirectory::Juce);
-    
+        
         logger->info("Generating juce information...");
         createFileStructure();
         
