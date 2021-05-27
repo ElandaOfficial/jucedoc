@@ -256,7 +256,7 @@ void JuceDocClient::onMessage(SleepyDiscord::Message message)
 
 void JuceDocClient::onReady(sld::Ready readyData)
 {
-    anon juce::ScopedValueSetter(busy, true);
+    busy.store(true);
     logger->info("Initialising JuceDoc...");
     
     setupRepository();
@@ -291,6 +291,7 @@ void JuceDocClient::onReady(sld::Ready readyData)
     commands.emplace_back(std::make_unique<CommandFilters>(*this));
     
     logger->info("JuceDoc is now ready to be used.");
+    busy.store(false);
 }
 
 void JuceDocClient::onError(sld::ErrorCode, const std::string errorMessage)
