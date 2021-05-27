@@ -23,6 +23,12 @@ matrix:
             - cmake-data
             - cmake
             - libgraphviz-dev
+            - libx11-dev
+            - libxinerama-dev
+            - libxrandr-dev
+            - libxcursor-dev
+            - libfreetype6-dev
+            - libxcomposite-dev
       env:
         - MATRIX_EVAL="CC=gcc-9 && CXX=g++-9"
 
