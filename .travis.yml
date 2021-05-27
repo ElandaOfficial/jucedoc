@@ -1,0 +1,45 @@
+language: c++
+dist: focal
+compiler: g++
+
+git:
+  depth: 1
+  quiet: true
+
+branches:
+  only:
+  - main
+
+matrix:
+  include:
+    - os: linux
+      addons:
+        apt:
+          update: true
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - g++-9
+            - cmake-data
+            - cmake
+            - libgraphviz-dev
+            - libx11-dev
+            - libxinerama-dev
+            - libxrandr-dev
+            - libxcursor-dev
+            - libfreetype6-dev
+            - libxcomposite-dev
+      env:
+        - MATRIX_EVAL="CC=gcc-9 && CXX=g++-9"
+
+before_install:
+  - eval "${MATRIX_EVAL}"
+
+before_script:
+  - mkdir build
+  - cd build
+  - cmake ..
+
+script:
+  - make
+  - make test
