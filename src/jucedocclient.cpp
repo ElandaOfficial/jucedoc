@@ -473,17 +473,17 @@ void JuceDocClient::createFileStructure()
 //======================================================================================================================
 void JuceDocClient::setupRepository() const
 {
-    const juce::String &branch = AppConfig::getInstance().branchName;
     juce::ChildProcess gitProcess;
-    
     AppConfig &config = AppConfig::getInstance();
+    const juce::String &branch = config.branchName;
     
     if (config.cloneOnStart || !dirJuce.exists())
     {
         (void) dirJuce.deleteRecursively();
         logger->info("Cloning latest juce " + branch.toStdString() + " commit...");
         
-        (void) gitProcess.start("git clone --branch " + branch + AppInfo::urlJuceGitRepo.data() + " juce/" + branch);
+        (void) gitProcess.start("git clone --branch " + branch + " " + AppInfo::urlJuceGitRepo.data()
+                                + " juce/" + branch);
         (void) gitProcess.waitForProcessToFinish(-1);
     }
     

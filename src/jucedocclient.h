@@ -117,7 +117,7 @@ private:
     juce::File dirJuce { dirRoot.getChildFile("juce/" + AppConfig::getInstance().branchName) };
     juce::File dirDocs { dirJuce.getChildFile("docs/doxygen") };
     
-    bool busy { false };
+    std::atomic<bool> busy { false };
     
     //==================================================================================================================
     juce::String getActivator() const;
