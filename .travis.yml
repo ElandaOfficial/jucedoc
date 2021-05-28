@@ -10,6 +10,14 @@ branches:
   only:
   - main
 
+deploy:
+  provider: releases
+  api_key: $GH_OAUTH
+  file: "JuceDoc"
+  skip_cleanup: true
+  on:
+    tags: true
+
 matrix:
   include:
     - os: linux
