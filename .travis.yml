@@ -6,10 +6,6 @@ git:
   depth: 1
   quiet: true
 
-branches:
-  only:
-  - main
-
 deploy:
   provider: releases
   api_key: $GH_OAUTH
