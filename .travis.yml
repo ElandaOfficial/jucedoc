@@ -1,4 +1,5 @@
-language: c++
+os: linux
+language: cpp
 dist: focal
 compiler: g++
 
@@ -8,13 +9,14 @@ git:
 
 deploy:
   provider: releases
-  api_key: $GH_OAUTH
+  token: $GH_OAUTH
   file: "JuceDoc"
-  skip_cleanup: true
+  cleanup: false
+  edge: true
   on:
     tags: true
 
-matrix:
+jobs:
   include:
     - os: linux
       addons:
