@@ -10,7 +10,7 @@ git:
 deploy:
   provider: releases
   token: $GH_OAUTH
-  file: "Release/JuceDoc"
+  file: "JuceDoc_artefacts/Release/JuceDoc"
   cleanup: false
   edge: true
   on:
