@@ -14,7 +14,6 @@
 #include <juce_core/juce_core.h>
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <bitset>
 #include <stack>

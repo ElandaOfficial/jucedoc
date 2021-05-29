@@ -89,7 +89,7 @@ namespace
     
         JD_DBG("Generating embed with filters: " + filter.toString().toStdString());
         
-        client.sendMessage(msg.channelID, "", embed.toEmbed(title, colour), sld::TTS::Default, {
+        client.sendMessage(msg.channelID, "", embed.toEmbed(title, colour), {}, sld::TTS::Default, {
             [&client, embed, sid = msg.serverID](sld::ObjectResponse<sld::Message> response) mutable
             {
                 if (embed.getMaxPages() <= 1)
@@ -240,7 +240,7 @@ bool CommandShow::execute(const sld::Message &msg, const juce::StringArray &args
     if (const juce::File cs_file = def.generateGraph(dir_temp, dir_temp); !cs_file.getFullPathName().isEmpty())
     {
         embed.image.url = "attachment://" + cs_file.getFileName().toStdString();
-        (void) client.uploadFile(msg.channelID, cs_file.getFullPathName().toStdString(), "", embed, {
+        (void) client.uploadFile(msg.channelID, cs_file.getFullPathName().toStdString(), "", embed, {}, {
             [cs_file](auto&&) { (void) cs_file.deleteFile(); }
         });
     }
