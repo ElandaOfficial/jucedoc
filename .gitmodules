@@ -7,6 +7,7 @@
 [submodule "lib/sleepy-discord"]
 	path = lib/sleepy-discord
 	url = https://github.com/yourWaifu/sleepy-discord
+	branch = develop
 [submodule "lib/jaut"]
 	path = lib/jaut
 	url = https://github.com/ElandaSunshine/Jaut
