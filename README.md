@@ -16,6 +16,3 @@ A discord bot that consults the juce code documentation.
 
 ## Issues
 May not compile on Windows due to MSVC's weird macro expansion venum depends on.
-
-## Links
-My Discord: https://discord.gg/jzRyAtnJBc
