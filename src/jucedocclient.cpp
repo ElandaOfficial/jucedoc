@@ -203,7 +203,7 @@ void JuceDocClient::onMessage(SleepyDiscord::Message message)
 {
     const juce::String content = message.content;
     
-    if (content.startsWith(getActivator()))
+    if (content.startsWith("<@!" + clientId + ">") || content.startsWith("<@" + clientId + ">"))
     {
         if (busy)
         {
