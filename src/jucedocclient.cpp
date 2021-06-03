@@ -203,7 +203,10 @@ void JuceDocClient::onMessage(SleepyDiscord::Message message)
 {
     const juce::String content = message.content;
     
-    if (content.startsWith("<@!" + clientId + ">") || content.startsWith("<@" + clientId + ">"))
+    const bool mobmen = content.startsWith("<@" + clientId + ">");
+    const bool commen = content.startsWith("<@!" + clientId + ">"); 
+
+    if (mobmen || commen)
     {
         if (busy)
         {
@@ -211,7 +214,7 @@ void JuceDocClient::onMessage(SleepyDiscord::Message message)
             return;
         }
         
-        const juce::String args_string = content.fromFirstOccurrenceOf(getActivator(), false, false).trim();
+        const juce::String args_string = content.fromFirstOccurrenceOf((mobmen ? "<@" : "<@!") + clientId + ">", false, false).trim();
         juce::StringArray  args        = juce::StringArray::fromTokens(args_string, true);
         
         if (args.isEmpty())
