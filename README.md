@@ -1,6 +1,9 @@
 ## Brief
 A discord bot that consults the juce code documentation.
 
+https://img.shields.io/travis/com/ElandaOfficial/jucedoc/main?logo=travis-ci&logoColor=white&style=for-the-badge
+[![Invite - JuceDoc](https://img.shields.io/static/v1?label=Invite&message=JuceDoc&color=7289da&style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/api/oauth2/authorize?client_id=833047531592089611&permissions=2147544128&scope=bot)
+
 ## Dependencies
 [JUCE](https://github.com/juce-framework/juce)  
 
